@@ -1,0 +1,117 @@
+[
+  {
+    "id": "per-chat",
+    "title": "Настройки для каждого чата",
+    "phase": "start",
+    "version": "1.3.1",
+    "legacyName": "SpicyChat — Настройки для каждого чата",
+    "legacyNamespace": "https://spicychat.ai/",
+    "storageKeys": [
+      "tm-sc-per-chat-response-length-v1",
+      "tm-sc-per-chat-inference-model-v1",
+      "tm-sc-per-chat-persistent-command-v1"
+    ]
+  },
+  {
+    "id": "quick-delete",
+    "title": "Быстрое удаление сообщений",
+    "phase": "start",
+    "version": "2.2.0",
+    "legacyName": "SpicyChat — быстрое удаление сообщений",
+    "legacyNamespace": "spicychat-quick-delete",
+    "storageKeys": []
+  },
+  {
+    "id": "timestamps",
+    "title": "Время сообщений",
+    "phase": "start",
+    "version": "1.2.0",
+    "legacyName": "SpicyChat — Время сообщений",
+    "legacyNamespace": "https://spicychat.ai/",
+    "storageKeys": [
+      "tm-sc-message-timestamps-v1:conversation:"
+    ]
+  },
+  {
+    "id": "gallery",
+    "title": "Галерея изображений диалога",
+    "phase": "start",
+    "version": "1.1.2",
+    "legacyName": "SpicyChat — Галерея изображений диалога",
+    "legacyNamespace": "https://spicychat.ai/",
+    "storageKeys": []
+  },
+  {
+    "id": "branches",
+    "title": "Дерево чатов",
+    "phase": "start",
+    "version": "1.3.0",
+    "legacyName": "SpicyChat — Дерево чатов",
+    "legacyNamespace": "https://spicychat.ai/",
+    "storageKeys": [
+      "tm-sc-chat-branches-v1:bot:"
+    ]
+  },
+  {
+    "id": "bookmarks",
+    "title": "Закладки сообщений",
+    "phase": "start",
+    "version": "1.3.0",
+    "legacyName": "SpicyChat — Закладки сообщений",
+    "legacyNamespace": "https://spicychat.ai/",
+    "storageKeys": [
+      "tm-sc-message-bookmarks-v1:conversation:"
+    ]
+  },
+  {
+    "id": "summary",
+    "title": "Пересказ диалога через OpenAI",
+    "phase": "start",
+    "version": "1.2.0",
+    "legacyName": "SpicyChat — Пересказ диалога через OpenAI",
+    "legacyNamespace": "https://spicychat.ai/",
+    "storageKeys": [
+      "tm-sc-gpt-summary-v1.1:"
+    ]
+  },
+  {
+    "id": "tts",
+    "title": "Эмоциональная озвучка Inworld",
+    "phase": "start",
+    "version": "1.0.0",
+    "legacyName": "SpicyChat — эмоциональная озвучка Inworld",
+    "legacyNamespace": "https://spicychat.ai/",
+    "storageKeys": []
+  },
+  {
+    "id": "emoji",
+    "title": "Emoji Picker",
+    "phase": "dom",
+    "version": "1.3.0",
+    "legacyName": "SpicyChat — Emoji Picker",
+    "legacyNamespace": "https://spicychat.ai/",
+    "storageKeys": [
+      "tm-spicychat-emoji-picker-state-v1"
+    ]
+  },
+  {
+    "id": "buttons",
+    "title": "Кнопки изображения и Suggest Reply",
+    "phase": "dom",
+    "version": "2.1.0",
+    "legacyName": "SpicyChat — Кнопки изображения и Suggest Reply",
+    "legacyNamespace": "https://spicychat.ai/",
+    "storageKeys": []
+  },
+  {
+    "id": "saved-texts",
+    "title": "Сохранённые тексты",
+    "phase": "dom",
+    "version": "1.3.0",
+    "legacyName": "SpicyChat — Сохранённые тексты",
+    "legacyNamespace": "https://spicychat.ai/",
+    "storageKeys": [
+      "tm-sc-saved-texts-v1:bot:"
+    ]
+  }
+]

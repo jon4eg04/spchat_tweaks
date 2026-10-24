@@ -1,0 +1,38 @@
+name: Build and verify userscript
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', 'scripts/**', 'tests/**', 'package.json', '.github/workflows/build.yml']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Build, migration tests, and public-file checks
+        run: |
+          node scripts/check-version.mjs
+          npm run check
+      - name: Publish generated install files
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add dist/
+          if ! git diff --cached --quiet; then
+            git commit -m 'Build installable userscript [skip ci]'
+            git push
+          fi
