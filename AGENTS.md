@@ -11,3 +11,11 @@
 - Run npm run check for code changes. Add meaningful tests for migration, data loss, request interception, or credential handling changes.
 - Bump package.json version for release changes. GitHub Actions verifies and regenerates dist/ on main.
 - Update README.md, docs/MIGRATION.md, and PROJECT_STATE.md when the workflow or storage format changes.
+
+# Original-script parity
+
+- The original eleven scripts are the behavior and visual baseline. See docs/PARITY.md for the verified versions and deliberate differences.
+- Preserve placement, ordering, labels, styling, storage keys, action semantics, keyboard behavior and dismissal. A source refactor is not permission to redesign a feature.
+- Any divergence must name a concrete changed page structure or a reproduced bug, and update docs/PARITY.md. If intent is ambiguous, ask the user.
+- Verify interactions with all eleven modules enabled, including summary/TTS menu integration, even when their external services are out of scope. Use only mocked handlers in tests.
+- Browser checks must pass in both Chromium and Firefox before publishing. Never equate identical CSS or synthetic startup with complete live-site verification.

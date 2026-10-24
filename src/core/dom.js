@@ -170,6 +170,9 @@ export function createDomAdapters() {
             const button = document.createElement('button');
             button.type = 'button';
             button.className = Array.from(template.classList).filter(name => !name.startsWith('tm-sc-') && !name.startsWith('sc-quick-')).join(' ');
+            for (const name of ['style', 'dir', 'lang']) {
+                if (template.hasAttribute(name)) button.setAttribute(name, template.getAttribute(name));
+            }
             button.innerHTML = template.innerHTML;
             if (!button.querySelector('p, span')) {
                 const icon = button.querySelector('svg')?.cloneNode(true);

@@ -6,7 +6,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Current implementation
 
-- Version 1.0.4. Public source and installation files in this repository.
+- Version 1.0.5. Public source and installation files in this repository.
 - User requested no personal-name attribution anywhere in published files. The author header is omitted, AGENTS.md forbids future personal-name attribution, and public-file checks reject author headers.
 - Added hide-models, based on the user's Hide selected model blocks v1.1: hides Qwen3 235B 2507 and Codex 24B, handles dynamically inserted paragraphs and text changes, and restores a hidden row if the site reuses it for another model. Independently toggled and enabled by default on upgrade.
 - The additional legacy hider is optional in ZIP migration. Original eleven-script backups are still complete; no repeated import is needed for already-migrated users.
@@ -42,4 +42,15 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Next steps
 
-The user updates the combined script to 1.0.4 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Future native-model-menu additions require finding their exact previous code or requirements.
+The user updates the combined script to 1.0.5 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Future native-model-menu additions require finding their exact previous code or requirements.
+
+## Full original-source audit (1.0.5)
+
+- docs/PARITY.md records all eleven baselines, feature intent and every deliberate divergence. Originals came from prior chat files; the old tampermonkey-scripts repository has no SpicyChat sources. The first public module snapshot is f6a377f.
+- AST/function comparison: 554 original top-level functions; 526 remain textually identical, 27 are adapted and one obsolete saved-text menu helper is removed. All eleven CSS blocks remain unchanged.
+- Found and fixed summary menu integration missed by earlier tests that disabled summary: role-based menus were not recognized and cloning could retain a gallery/bookmark service class. Summary now uses the common menu adapter; its algorithm remains unchanged.
+- Restored native menu inline styles/dir/lang lost by the shared clone constructor. Removed the suite-only noframes restriction absent from all originals.
+- Feature tests now include all eleven modules together, fake summary generation/cache and TTS prepare/synthesis/ordered playback/cache/cancel. No real handler requests or paid provider calls.
+- Additional tests cover saved-text pin/search/confirmed deletion, bookmark rename/deletion, branch collapse/rename/search, conversation changes, working controls after composer remount and actual document-start before body.
+- Browser scripts support TEST_BROWSER=firefox; CI runs both Chromium and Firefox before publishing. The local container requires the test-only Firefox sandbox override; production userscript behavior is unaffected.
+- Preserve original behavior rather than redesigning it. New deviations require a concrete page change or reproduced bug, documentation and a regression test; ask the user when intent is unclear.

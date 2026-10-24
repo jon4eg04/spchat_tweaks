@@ -20,7 +20,6 @@ const header = `// ==UserScript==
 // @match        https://www.spicychat.ai/*
 // @match        https://*.spicychat.ai/*
 // @run-at       document-start
-// @noframes
 // @grant        unsafeWindow
 // @grant        GM_addStyle
 // @grant        GM_getValue

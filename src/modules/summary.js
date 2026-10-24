@@ -1049,7 +1049,7 @@ export default function init(runtime) {
     }
 
     function cloneMenuButton(template) {
-        const button = template.cloneNode(true);
+        const button = runtime.dom.cloneMenuButton(template);
         button.classList.add(MENU_ITEM_CLASS);
         button.setAttribute('aria-label', 'Пересказать чат');
         button.removeAttribute('data-testid');
@@ -1062,29 +1062,7 @@ export default function init(runtime) {
     }
 
     function findChatMenu(dropdown) {
-        const wrapper = dropdown?.parentElement;
-        if (wrapper) {
-            const directSibling = dropdown.nextElementSibling;
-            if (directSibling?.querySelector('button[aria-label="View Saved Chats" i]')) return directSibling;
-            const nested = Array.from(wrapper.children).find((child) => (
-                child !== dropdown
-                && child.querySelector?.('button[aria-label="View Saved Chats" i]')
-            ));
-            if (nested) return nested;
-        }
-
-        const menus = Array.from(document.querySelectorAll('button[aria-label="View Saved Chats" i]'))
-            .map((button) => button.parentElement)
-            .filter((menu) => (
-                menu
-                && menu.querySelector('button[aria-label="Start New Chat" i]')
-                && menu.querySelector('button[aria-label="Remove Messages" i]')
-            ));
-        return menus.find((menu) => {
-            const rect = menu.getBoundingClientRect();
-            const style = getComputedStyle(menu);
-            return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
-        }) || menus[0] || null;
+        return runtime.dom.chatMenu(dropdown);
     }
 
     function normalizeCustomChatMenuOrder(menu) {
@@ -1112,7 +1090,7 @@ export default function init(runtime) {
                     menu.querySelector(`.${GALLERY_MENU_ITEM_CLASS}`)
                     || menu.querySelector(`.${BOOKMARK_MENU_ITEM_CLASS}`)
                     || menu.querySelector('button[aria-label="View Saved Chats" i]')
-                    || menu.querySelector('button')
+                    || menu.querySelector('button, [role="menuitem"]')
                 );
                 if (!template) continue;
                 button = cloneMenuButton(template);
@@ -1229,4 +1207,6 @@ export default function init(runtime) {
         document.addEventListener('DOMContentLoaded', startDomFeatures, { once: true });
     }
     startDomFeatures();
+    runtime.dom.subscribe(scheduleEnsure);
+
 }

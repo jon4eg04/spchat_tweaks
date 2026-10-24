@@ -3,7 +3,9 @@ import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.PLAYWRIGHT_PACKAGE || 'playwright');
+const browserName = process.env.TEST_BROWSER || 'chromium';
+const browserType = require(process.env.PLAYWRIGHT_PACKAGE || 'playwright')[browserName];
+if (!browserType) throw new Error('Unsupported browser: ' + browserName);
 const bundle = await readFile(process.env.FEATURE_BUNDLE || new URL('../dist/spicychat-tools.user.js', import.meta.url), 'utf8');
 const bot = '11111111-1111-4111-8111-111111111111';
 const chat = '22222222-2222-4222-8222-222222222222';
@@ -15,14 +17,14 @@ body{margin:32px;font:16px sans-serif}button,[role=menuitem]{padding:8px;cursor:
 <div id="composer" class="flex items-end gap-sm w-full"><button aria-label="Plus-button">+</button><div data-tooltip-content="Generate image"><button aria-label="Generate image" data-testid="ImageGenerationButton">Image</button></div><div class="w-full flex"><div class="grow border-1 border-solid border-gray-5 rounded-[13px] py-sm px-2 bg-gray-3"><div class="flex flex-1 items-end gap-1"><textarea placeholder="Message..."></textarea></div></div></div><button aria-label="send-message">Send</button></div>
 <img width="20" height="20" src="https://cdn.nd-api.com/conversations/${chat}/fixture.png">
 </body></html>`;
-const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+const browser = await browserType.launch({ headless: true, firefoxUserPrefs: browserName === 'firefox' && process.env.TEST_FIREFOX_NO_SANDBOX === '1' ? { 'security.sandbox.content.level': 0 } : undefined, executablePath: browserName === 'chromium' ? process.env.CHROMIUM_EXECUTABLE || undefined : undefined, args: browserName === 'chromium' ? ['--no-sandbox', '--disable-dev-shm-usage'] : [] });
 const errors = []; const scenarios = []; const requests = [];
 try {
 const context = await browser.newContext({ viewport: { width: 1400, height: 1100 } });
 await context.route('**/*', async route => {
     const req = route.request();
     if (req.url().startsWith('https://spicychat.ai/chat/')) return route.fulfill({ contentType: 'text/html', body: html });
-    if (req.resourceType() === 'image') return route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1cAAAAASUVORK5CYII=', 'base64') });
+    if (req.resourceType() === 'image') return route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR4nGMMSKn4z8DAwMDEAAUAIMACL7pOGm8AAAAASUVORK5CYII=', 'base64') });
     requests.push({ url: req.url(), method: req.method(), body: req.postData() });
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ messages: messages.map((id, i) => ({ id, conversation_id: chat, content: `Fixture ${i}`, role: i ? 'user' : 'bot', createdAt: `2026-10-01T${i ? '14' : '10'}:00:00Z` })), conversations: [] }), headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*' } });
 });
@@ -35,16 +37,19 @@ await context.addInitScript(() => {
     window.GM_xmlhttpRequest = () => { throw Error('Unexpected external handler'); };
     window.confirm = () => true; window.alert = text => { throw Error(text); };
 });
-async function fixture(disabled = {}) {
+async function fixture(disabled = {}, seed = {}) {
     const page = await context.newPage();
     page.setDefaultTimeout(6000);
     page.on('pageerror', error => errors.push(error.message));
     page.on('console', msg => { if (msg.type() === 'error' && !msg.text().includes('Failed to load resource')) errors.push(msg.text()); });
     await page.goto(`https://spicychat.ai/chat/${bot}/${chat}`);
-    await page.evaluate(({ disabled, bot, chat }) => {
-        __gm.set('spchat-tweaks:settings:v1', { active: true, modules: { summary: false, tts: false, ...disabled }, endpoints: {} });
+    await page.evaluate(({ disabled, bot, chat, seed }) => {
+        __gm.set('spchat-tweaks:settings:v1', { active: true, modules: { summary: false, tts: false, ...disabled }, endpoints: { summary: { url: 'https://example.test/summary', token: 'fixture-summary' }, tts: { url: 'https://example.test/tts', token: 'fixture-tts' } } });
         __gm.set(`tm-sc-chat-branches-v1:bot:${bot}`, { nodes: [{ conversationId: chat, characterId: bot, title: 'Fixture root', kind: 'root', createdAt: Date.now() }] });
+        if (seed.graph) __gm.set(`tm-sc-chat-branches-v1:bot:${bot}`, seed.graph);
         document.querySelector('[id^=message-]').append(document.querySelector('img'));
+        window.__composerMarkup = document.querySelector('#composer').outerHTML;
+        window.__remountComposer = () => { const template = document.createElement('template'); template.innerHTML = __composerMarkup; document.querySelector('#composer').replaceWith(template.content.firstElementChild); };
         window.__actions = { image: 0, suggest: 0, send: 0, remove: 0 };
         function removalMode() {
             let selected = null;
@@ -81,12 +86,13 @@ async function fixture(disabled = {}) {
             const menu = document.createElement('div'); menu.dataset.fixtureMenu = 'true'; if (!window.__plainMenus) menu.setAttribute('role', 'menu'); menu.__trigger = button;
             for (const label of labels) {
                 const item = document.createElement('div'); item.setAttribute('role', 'menuitem'); item.tabIndex = 0; item.textContent = label;
+                if (window.__inlineStyles) item.style.cssText = 'padding-left:19px;font-size:17px';
                 item.onclick = () => { if (label === 'Remove Messages') removalMode(); if (label === 'Suggest Reply') __actions.suggest++; if (label === 'Generate Image') __actions.image++; menu.remove(); };
                 menu.append(item);
             }
             if (window.__inlineMenus) button.parentElement.append(menu); else document.body.append(menu);
         });
-    }, { disabled, bot, chat });
+    }, { disabled, bot, chat, seed });
     await page.addScriptTag({ content: bundle });
     await page.locator('.tm-sc-emoji-trigger').waitFor();
     return page;
@@ -121,6 +127,7 @@ scenarios.push('save-and-reuse-draft', 'emoji-at-caret');
 await page.locator('.tm-sc-suggest-reply-shortcut').click();
 await page.waitForFunction(() => __actions.suggest === 1);
 assert.equal(await draft.inputValue(), `Before${glyph}After`);
+assert.equal(await page.locator('.tm-sc-generate-image-shortcut').isVisible(), false, 'image shortcut must hide with a draft, as its original handler intends');
 await draft.fill(''); await page.locator('.tm-sc-generate-image-shortcut').click();
 await page.waitForFunction(() => __actions.image === 1);
 scenarios.push('persistent-lightbulb-with-draft', 'image-shortcut');
@@ -230,17 +237,134 @@ await standaloneSave.locator(`#message-${messages[1]} [aria-label=message-dropdo
 await standaloneSave.locator('.tm-sc-save-history-message').click();
 await standaloneSave.waitForFunction(bot => __gm.get(`tm-sc-saved-texts-v1:bot:${bot}`)?.[0]?.text === 'Second plain message', bot);
 scenarios.push('save-message-without-quick-delete');
-await standaloneSave.evaluate(() => document.querySelector('#composer').replaceWith(document.querySelector('#composer').cloneNode(true)));
+await standaloneSave.evaluate(() => __remountComposer());
 await standaloneSave.locator('.tm-sc-save-current-text').waitFor();
 assert.equal(await standaloneSave.locator('.tm-sc-suggest-reply-shortcut').count(), 1);
 assert.equal(await standaloneSave.locator('.tm-sc-emoji-trigger').count(), 1);
-scenarios.push('composer-remount-without-duplicate-controls');
+await standaloneSave.locator('.tm-sc-open-saved-texts').click();
+await standaloneSave.locator('.tm-sc-saved-search').waitFor({ state: 'visible' });
+await standaloneSave.keyboard.press('Escape');
+scenarios.push('composer-remount-with-working-controls');
 scenarios.push('bookmarks-without-saved-texts-or-quick-delete');
 const inline = await fixture({ 'saved-texts': false, 'quick-delete': false });
 await inline.evaluate(() => { window.__inlineMenus = true; });
 await bookmark(inline, 1, 'Inline owner');
 assert.equal(await inline.locator(`#message-${messages[0]} .tm-sc-message-bookmark-marker`).count(), 0);
 scenarios.push('inline-menu-with-neighboring-messages');
+const complete = await fixture({ summary: true, tts: true });
+await complete.evaluate(() => { window.__inlineStyles = true; });
+await complete.locator('[aria-label=chat-dropdown]').click();
+for (const name of ['tm-sc-open-message-bookmarks', 'tm-sc-open-conversation-gallery', 'tm-sc-open-gpt-summary', 'tm-sc-open-chat-branches']) {
+    await complete.locator('.' + name).waitFor();
+    assert.equal(await complete.locator('.' + name).count(), 1, name + ' must identify exactly its own action');
+}
+scenarios.push('all-eleven-modules-menu-isolation');
+for (const name of ['tm-sc-open-message-bookmarks', 'tm-sc-open-conversation-gallery', 'tm-sc-open-gpt-summary', 'tm-sc-open-chat-branches']) {
+    assert.equal(await complete.locator('.' + name).evaluate(node => getComputedStyle(node).paddingLeft), '19px');
+}
+scenarios.push('native-menu-inline-styles-preserved');
+await complete.evaluate(() => {
+    window.__handlerRequests = []; window.__played = 0; window.__aborted = 0;
+    window.AudioContext = class {
+        state = 'running'; destination = {};
+        async resume() {} async decodeAudioData() { return { duration: 0.01 }; }
+        createBufferSource() { const source = { connect() {}, start() { __played++; setTimeout(() => source.onended?.(), 5); }, stop() { source.onended?.(); } }; return source; }
+    };
+    window.GM_xmlhttpRequest = options => {
+        const data = JSON.parse(options.data); __handlerRequests.push({ url: options.url, headers: options.headers, data });
+        const timer = window.__holdRequests ? null : setTimeout(() => {
+            const payload = data.stage ? { ok: true, summary: '## Fixture summary\n\nTwo invented messages.', usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } }
+                : data.action === 'prepare' ? { ok: true, segments: [{ text: 'First segment' }, { text: 'Second segment' }] }
+                : { ok: true, audio: 'AQID' };
+            options.onload({ status: 200, responseText: JSON.stringify(payload) });
+        }, 10);
+        return { abort() { clearTimeout(timer); __aborted++; options.onabort?.(); } };
+    };
+    document.querySelector('[data-fixture-menu]')?.remove();
+    for (const message of document.querySelectorAll('[id^=message-]')) {
+        const volume = document.createElement('button'); volume.setAttribute('aria-label', 'Volume2-button'); volume.textContent = 'Speak'; message.querySelector('.relative').append(volume);
+    }
+});
+await complete.evaluate(async ({ bot, chat }) => (await fetch(`https://prod.nd-api.com/characters/${bot}/messages/${chat}`, { headers: { Authorization: 'Bearer synthetic-session' } })).json(), { bot, chat });
+await complete.locator('[aria-label=chat-dropdown]').click(); await complete.locator('.tm-sc-open-gpt-summary').click();
+await complete.getByText('Two invented messages.', { exact: true }).waitFor();
+assert.equal(await complete.evaluate(() => __handlerRequests.filter(x => x.data.stage).length), 1);
+assert.equal(await complete.evaluate(() => __handlerRequests[0].headers['X-Spicy-Summary-Token']), 'fixture-summary');
+await complete.keyboard.press('Escape');
+await complete.locator('[aria-label=chat-dropdown]').click(); await complete.locator('.tm-sc-open-gpt-summary').click();
+await complete.getByText('Two invented messages.', { exact: true }).waitFor();
+assert.equal(await complete.evaluate(() => __handlerRequests.filter(x => x.data.stage).length), 1, 'reopening must use the existing summary');
+await complete.keyboard.press('Escape');
+scenarios.push('summary-generation-and-cache-with-local-endpoint');
+await complete.locator('.tm-sc-inworld-tts-button').first().click();
+await complete.waitForFunction(() => __played === 2 && document.querySelector('#tm-sc-inworld-tts-log').textContent.includes('Озвучка завершена'));
+assert.deepEqual(await complete.evaluate(() => __handlerRequests.filter(x => x.url.endsWith('/tts')).map(x => x.data.action)), ['prepare', 'synthesize', 'synthesize']);
+await complete.locator('.tm-sc-inworld-tts-button').first().click();
+await complete.waitForFunction(() => __played === 4 && document.querySelector('#tm-sc-inworld-tts-log').textContent.includes('Озвучка завершена'));
+assert.equal(await complete.evaluate(() => __handlerRequests.filter(x => x.url.endsWith('/tts')).length), 3);
+await complete.evaluate(() => { window.__holdRequests = true; });
+await complete.locator('.tm-sc-inworld-tts-button').nth(1).click();
+await complete.waitForFunction(() => __handlerRequests.filter(x => x.url.endsWith('/tts')).length === 4);
+await complete.locator('.tm-sc-inworld-tts-button').nth(1).click();
+assert.equal(await complete.evaluate(() => __aborted), 1);
+scenarios.push('tts-prepare-synthesize-ordered-playback-cache-cancel');
+const manage = await fixture({}, { graph: { nodes: [
+    { conversationId: chat, characterId: bot, title: 'Root', kind: 'root', createdAt: 1 },
+    { conversationId: '55555555-5555-4555-8555-555555555555', characterId: bot, title: 'Child branch', kind: 'partial', parentId: chat, forkMessageId: messages[0], createdAt: 2 },
+] } });
+await manage.evaluate(bot => {
+    __gm.set(`tm-sc-saved-texts-v1:bot:${bot}`, [
+        { id: 'alpha', text: 'Alpha text', createdAt: 10, pinned: false },
+        { id: 'beta', text: 'Beta text', createdAt: 20, pinned: false },
+    ]);
+}, bot);
+await manage.locator('.tm-sc-open-saved-texts').click();
+await manage.locator('.tm-sc-saved-card').first().waitFor();
+await manage.locator('[data-entry-id=alpha]').getByRole('button', { name: 'Закрепить', exact: true }).click();
+await manage.waitForFunction(() => document.querySelector('.tm-sc-saved-card')?.dataset.entryId === 'alpha');
+await manage.locator('.tm-sc-saved-search').fill('Beta');
+assert.equal(await manage.locator('.tm-sc-saved-card').count(), 1);
+await manage.getByRole('button', { name: 'Удалить', exact: true }).click();
+assert.equal(await manage.evaluate(bot => __gm.get(`tm-sc-saved-texts-v1:bot:${bot}`).length, bot), 2);
+await manage.getByRole('button', { name: 'Подтвердить удаление', exact: true }).click();
+await manage.waitForFunction(bot => __gm.get(`tm-sc-saved-texts-v1:bot:${bot}`).length === 1, bot);
+await manage.keyboard.press('Escape');
+scenarios.push('saved-text-search-pin-confirmed-delete');
+await bookmark(manage, 0, 'Editable bookmark');
+await manage.locator('[aria-label=chat-dropdown]').click(); await manage.locator('.tm-sc-open-message-bookmarks').click();
+await manage.getByRole('button', { name: 'Изменить название', exact: true }).click();
+await manage.getByLabel('Название закладки', { exact: true }).fill('Renamed bookmark');
+await manage.locator('.tm-sc-bookmark-editor-button.is-save').click();
+await manage.waitForFunction(() => document.querySelector('.tm-sc-message-bookmark-marker')?.getAttribute('aria-label') === 'Renamed bookmark');
+await manage.locator('[aria-label=chat-dropdown]').click(); await manage.locator('.tm-sc-open-message-bookmarks').click();
+await manage.getByText('Renamed bookmark', { exact: true }).waitFor();
+await manage.getByRole('button', { name: 'Удалить закладку', exact: true }).click();
+assert.equal(await manage.locator('.tm-sc-message-bookmark-marker').count(), 1);
+await manage.locator('.tm-sc-bookmark-confirm-button.is-yes').click();
+await manage.waitForFunction(() => !document.querySelector('.tm-sc-message-bookmark-marker'));
+await manage.keyboard.press('Escape');
+scenarios.push('bookmark-rename-and-confirmed-delete');
+await manage.locator('[aria-label=chat-dropdown]').click(); await manage.locator('.tm-sc-open-chat-branches').click();
+await manage.getByText('Child branch', { exact: true }).waitFor();
+await manage.locator('.tm-sc-branch-toggle').first().click();
+await manage.waitForFunction(() => !document.querySelector('.tm-sc-branch-card.is-child') && document.querySelectorAll('.tm-sc-branch-card').length === 1);
+await manage.locator('.tm-sc-branch-toggle').first().click();
+await manage.getByText('Child branch', { exact: true }).waitFor();
+const child = manage.locator('.tm-sc-branch-card').filter({ hasText: 'Child branch' });
+await child.getByRole('button', { name: 'Переименовать в дереве', exact: true }).click();
+await manage.locator('.tm-sc-branches-editor-input').fill('Renamed child'); await manage.locator('.tm-sc-branches-editor-save').click();
+await manage.getByText('Renamed child', { exact: true }).waitFor();
+await manage.locator('.tm-sc-branches-search').fill('Renamed');
+assert.equal(await manage.getByText('Renamed child', { exact: true }).count(), 1);
+await manage.keyboard.press('Escape');
+scenarios.push('branch-collapse-rename-search');
+await manage.evaluate(({ bot }) => { history.pushState(null, '', `/chat/${bot}/66666666-6666-4666-8666-666666666666`); }, { bot });
+await manage.locator('.tm-sc-open-saved-texts').click();
+await manage.locator('.tm-sc-saved-search').fill('');
+await manage.getByText('Alpha text', { exact: true }).waitFor();
+assert.equal(await manage.locator('.tm-sc-message-bookmark-marker').count(), 0);
+await manage.keyboard.press('Escape');
+scenarios.push('spa-route-keeps-bot-library-and-isolates-conversation-state');
 assert.deepEqual(errors, []);
 console.log(JSON.stringify({ result: 'PASS', scenarios, errors }));
 } finally { await browser.close(); }

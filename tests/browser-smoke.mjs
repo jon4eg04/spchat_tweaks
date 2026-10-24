@@ -4,12 +4,14 @@ import { fileURLToPath } from 'node:url';
 import { catalog, makeLegacy, zip } from './fixtures.mjs';
 import assert from 'node:assert/strict';
 const require = createRequire(import.meta.url);
-const { chromium } = require(process.env.PLAYWRIGHT_PACKAGE || 'playwright');
+const browserName = process.env.TEST_BROWSER || 'chromium';
+const browserType = require(process.env.PLAYWRIGHT_PACKAGE || 'playwright')[browserName];
+if (!browserType) throw new Error('Unsupported browser: ' + browserName);
 const root = fileURLToPath(new URL('../', import.meta.url));
 await mkdir(root + 'test-results', { recursive: true });
 await writeFile(root + 'test-results/migration-fixture.zip', zip(makeLegacy()));
 const bundle = await readFile(root + 'dist/spicychat-tools.user.js', 'utf8');
-const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+const browser = await browserType.launch({ headless: true, firefoxUserPrefs: browserName === 'firefox' && process.env.TEST_FIREFOX_NO_SANDBOX === '1' ? { 'security.sandbox.content.level': 0 } : undefined, executablePath: browserName === 'chromium' ? process.env.CHROMIUM_EXECUTABLE || undefined : undefined, args: browserName === 'chromium' ? ['--no-sandbox', '--disable-dev-shm-usage'] : [] });
 try {
 const errors = []; const apiRequests = [];
 const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
@@ -104,7 +106,29 @@ await disabled.evaluate(() => {
 await disabled.addScriptTag({ content: bundle });
 await disabled.waitForFunction(() => document.querySelector('#tm-sc-emoji-trigger-wrap'));
 assert.notEqual(await disabled.locator('#disabled-hider-row').evaluate(node => getComputedStyle(node).display), 'none');
+// Exercise the actual document-start timing, before the page has a body.
+const earlyContext = await browser.newContext();
+await earlyContext.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><div style="display:flex"><div class="w-full flex"><textarea placeholder="Message..."></textarea></div></div><button aria-label="Plus-button">+</button></body></html>' }));
+const earlySetup = () => {
+    const db = new Map([['spchat-tweaks:settings:v1', { active: true, modules: { summary: false, tts: false }, endpoints: {} }]]);
+    window.unsafeWindow = window;
+    window.GM_getValue = (key, fallback) => db.has(key) ? structuredClone(db.get(key)) : fallback;
+    window.GM_setValue = (key, value) => db.set(key, structuredClone(value));
+    window.GM_listValues = () => [...db.keys()]; window.GM_deleteValue = key => db.delete(key);
+    window.GM_registerMenuCommand = () => {};
+    window.GM_addStyle = css => { const style = document.createElement('style'); style.textContent = css; document.documentElement.append(style); return style; };
+    window.GM_xmlhttpRequest = () => { throw new Error('Unexpected handler request'); };
+};
+await earlyContext.addInitScript({ content: `(${earlySetup})();\n${bundle}` });
+const early = await earlyContext.newPage();
+early.on('pageerror', error => errors.push(error.message));
+await early.goto('https://spicychat.ai/chat/bot-fixture/conversation-fixture');
+for (const selector of ['#spchat-tools-settings', '.tm-sc-emoji-trigger', '.tm-sc-suggest-reply-shortcut', '.tm-sc-open-saved-texts', '.tm-sc-save-current-text']) {
+    await early.locator(selector).waitFor({ state: selector === '#spchat-tools-settings' ? 'attached' : 'visible' });
+    assert.equal(await early.locator(selector).count(), 1);
+}
+await earlyContext.close();
 assert.equal(errors.length, 0, errors.join('\n'));
 await active.screenshot({ path: root + 'test-results/modules.png' });
-console.log(JSON.stringify({ result: 'PASS', scenarios: ['fresh-install-ui', 'activation-confirmation', 'zip-picker-preview-import', 'all-modules-start', 'combined-fetch-chain', 'per-chat-generation-rewrite', 'hidden-models-initial-and-dynamic', 'reused-model-row-restored', 'model-hiding-toggle'], errors }));
+console.log(JSON.stringify({ result: 'PASS', scenarios: ['fresh-install-ui', 'activation-confirmation', 'zip-picker-preview-import', 'all-modules-start', 'combined-fetch-chain', 'per-chat-generation-rewrite', 'hidden-models-initial-and-dynamic', 'reused-model-row-restored', 'model-hiding-toggle', 'document-start-before-body'], errors }));
 } finally { await browser.close(); }
