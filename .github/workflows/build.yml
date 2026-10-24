@@ -26,10 +26,12 @@ jobs:
         run: |
           node scripts/check-version.mjs
           npm run check
-      - name: Install browser test runtime
-        run: |
-          npm install --no-save --package-lock=false playwright@1.62.1 react@18.3.1 react-dom@18.3.1
-          npx playwright install --with-deps chromium firefox
+      - name: Install browser test packages
+        timeout-minutes: 3
+        run: npm install --no-save --package-lock=false --no-audit --no-fund --fetch-retries=1 --fetch-timeout=60000 playwright@1.62.1 react@18.3.1 react-dom@18.3.1
+      - name: Install test browsers
+        timeout-minutes: 5
+        run: npx playwright install --with-deps chromium firefox
       - name: Verify settings, migration, and feature interactions in Chromium and Firefox
         run: |
           node tests/browser-smoke.mjs
