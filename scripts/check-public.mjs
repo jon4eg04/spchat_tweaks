@@ -23,7 +23,7 @@ async function scan(directory) {
         const source = await readFile(resolve(root, relative), 'utf8');
         const allowedHosts = new Set(['spicychat.ai', 'www.spicychat.ai', 'nd-api.com', 'prod.nd-api.com', 'cdn.nd-api.com',
             'github.com', 'raw.githubusercontent.com', 'www.w3.org', 'example.test', 'evil.test',
-            'www.tampermonkey.net', 'developer.mozilla.org']);
+            'www.tampermonkey.net', 'developer.mozilla.org', 'archive.ubuntu.com']);
         for (const url of source.matchAll(/https?:\/\/([a-zA-Z0-9.-]+)/g)) {
             if (!allowedHosts.has(url[1])) throw new Error(`Unexpected hardcoded host in ${relative}. Value withheld.`);
         }

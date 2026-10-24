@@ -31,7 +31,13 @@ jobs:
         run: npm install --no-save --package-lock=false --no-audit --no-fund --fetch-retries=1 --fetch-timeout=60000 playwright@1.62.1 react@18.3.1 react-dom@18.3.1
       - name: Install test browsers
         timeout-minutes: 5
-        run: npx playwright install --with-deps chromium firefox
+        run: |
+          # The runner's Azure Ubuntu mirror can stall package downloads.
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            [ -f "$source" ] || continue
+            sudo sed -i -E 's|https?://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
+          done
+          npx playwright install --with-deps chromium firefox
       - name: Verify settings, migration, and feature interactions in Chromium and Firefox
         run: |
           node tests/browser-smoke.mjs
