@@ -2,11 +2,14 @@
 
 ## Goal
 
-One automatically updated Tampermonkey script containing the user's 11 existing SpicyChat features. Maintainable per-feature sources, local-only server configuration, and a one-time migration preserving user data.
+One automatically updated Tampermonkey script containing the user's 11 original SpicyChat features plus optional additions. Maintainable per-feature sources, local-only server configuration, and a one-time migration preserving user data.
 
 ## Current implementation
 
-- Version 1.0.0. Public source and installation files in this repository.
+- Version 1.0.1. Public source and installation files in this repository.
+- Added hide-models, based on the user's Hide selected model blocks v1.1: hides Qwen3 235B 2507 and Codex 24B, handles dynamically inserted paragraphs and text changes, and restores a hidden row if the site reuses it for another model. Independently toggled and enabled by default on upgrade.
+- The additional legacy hider is optional in ZIP migration. Original eleven-script backups are still complete; no repeated import is needed for already-migrated users.
+- The user reports the initial migration appears to work. The per-chat feature already has a custom model dropdown (Qwen Plus Character, Deepseek V4 Pro, Glam 5.1, Glam 4.6). A separate historical script adding a model to the site's native selector has not been found in saved files/history; do not invent one.
 - Eleven modules from the confirmed original versions are preserved as individual source files. Changes are limited to module wrappers, page access for the formerly grant-none per-chat module, and runtime handler configuration for summary/TTS.
 - A dependency-free Node.js builder links sources into dist/spicychat-tools.user.js; a small meta.js provides update metadata.
 - GitHub Actions builds, tests, checks public files, enforces version increases for source changes, and commits regenerated installation files.
@@ -31,4 +34,4 @@ One automatically updated Tampermonkey script containing the user's 11 existing 
 
 ## Next steps
 
-The user exports their current Tampermonkey ZIP with storage enabled, installs the combined release, previews and imports data on their usual SpicyChat origin/profile, disables the old eleven scripts, activates the suite, reloads every SpicyChat tab, and verifies saved data and handler functions. Keep old scripts disabled as rollback copies until that check is complete.
+The user updates the combined script to 1.0.1, disables the separate legacy hider if still present, and reloads SpicyChat. Existing data/configuration are retained. Future native-model-menu additions require finding their exact previous code or requirements.

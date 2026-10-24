@@ -83,7 +83,9 @@ export function createInterface({ store, catalog, storage, version, reload = () 
             plan = planSuiteImport(JSON.parse(await file.text()), catalog);
         }
         const heading = document.createElement('p');
-        heading.textContent = `Найдено модулей: ${plan.rows.length} из ${catalog.length}. Проверь список перед переносом.`;
+        const required = catalog.filter(module => !module.legacyOptional);
+        const found = plan.rows.filter(row => required.some(module => module.id === row.id)).length;
+        heading.textContent = `Найдено основных модулей: ${found} из ${required.length}. Дополнительных: ${plan.rows.length - found}. Проверь список перед переносом.`;
         preview.append(heading);
         const table = document.createElement('table');
         const head = document.createElement('tr');

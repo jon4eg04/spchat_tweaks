@@ -40,7 +40,7 @@ test('per-chat module still overrides the page fetch and XHR after gaining a use
     }
 });
 
-test('all eleven module files parse independently and the release has no runtime imports', async () => {
+test('all module files parse independently and the release has no runtime imports', async () => {
     const catalog = JSON.parse(await readFile(new URL('../src/modules.json', import.meta.url), 'utf8'));
     for (const module of catalog) {
         const source = await readFile(new URL(`../src/modules/${module.id}.js`, import.meta.url), 'utf8');
@@ -51,4 +51,19 @@ test('all eleven module files parse independently and the release has no runtime
     assert.equal(/^import /m.test(bundle), false);
     assert.equal(bundle.includes('@require'), false);
     assert.equal((bundle.match(/\/\/ ==UserScript==/g) || []).length, 1);
+});
+
+test('only the legacy hider runs on additional SpicyChat subdomains', async () => {
+    const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+    const catalog = JSON.parse(await readFile(new URL('../src/modules.json', import.meta.url), 'utf8'));
+    const calls = [];
+    vm.runInNewContext(source, {
+        MODULE_CATALOG: catalog, SUITE_VERSION: 'test',
+        FEATURE_INITIALIZERS: Object.fromEntries(catalog.map(module => [module.id, () => calls.push(module.id)])),
+        createStore: () => ({ settings: { active: true, modules: Object.fromEntries(catalog.map(module => [module.id, true])) } }),
+        createInterface: () => ({ start() {}, open() {} }),
+        location: { hostname: 'other.spicychat.ai' }, localStorage: {},
+        document: { readyState: 'complete' }, GM_registerMenuCommand() {}, console,
+    });
+    assert.deepEqual(calls, ['hide-models']);
 });

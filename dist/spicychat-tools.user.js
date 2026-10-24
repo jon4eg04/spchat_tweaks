@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         SpicyChat Tools
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
-// @version      1.0.0
-// @description  Единый комплект из 11 функций SpicyChat с локальными настройками и переносом старых данных.
+// @version      1.0.1
+// @description  Единый комплект из 12 функций SpicyChat с локальными настройками и переносом старых данных.
 // @author       ChatGPT & Женя
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
 // @match        https://spicychat.ai/*
 // @match        https://www.spicychat.ai/*
+// @match        https://*.spicychat.ai/*
 // @run-at       document-start
 // @noframes
 // @grant        unsafeWindow
@@ -27,7 +28,7 @@
 (function () {
 'use strict';
 
-const SUITE_VERSION = "1.0.0";
+const SUITE_VERSION = "1.0.1";
 
 const MODULE_CATALOG = [
   {
@@ -144,6 +145,17 @@ const MODULE_CATALOG = [
     "storageKeys": [
       "tm-sc-saved-texts-v1:bot:"
     ]
+  },
+  {
+    "id": "hide-models",
+    "title": "Скрытие ненужных моделей",
+    "phase": "dom",
+    "version": "1.1",
+    "legacyName": "Hide selected model blocks",
+    "legacyNamespace": "local",
+    "legacyOptional": true,
+    "matchesSubdomains": true,
+    "storageKeys": []
   }
 ];
 
@@ -419,7 +431,7 @@ function planLegacyImport(files, catalog, localStorage) {
         plan.rows.push({ id: module.id, title: module.title, enabled, keys, localKeys, version: meta.version });
     }
     if (!seen.size) throw new Error('В архиве не найдены исходные скрипты SpicyChat из нашего комплекта.');
-    for (const item of catalog) if (!seen.has(item.id)) plan.warnings.push(`${item.title}: скрипт отсутствует в архиве.`);
+    for (const item of catalog) if (!item.legacyOptional && !seen.has(item.id)) plan.warnings.push(`${item.title}: скрипт отсутствует в архиве.`);
     return plan;
 }
 
@@ -597,7 +609,9 @@ function createInterface({ store, catalog, storage, version, reload = () => loca
             plan = planSuiteImport(JSON.parse(await file.text()), catalog);
         }
         const heading = document.createElement('p');
-        heading.textContent = `Найдено модулей: ${plan.rows.length} из ${catalog.length}. Проверь список перед переносом.`;
+        const required = catalog.filter(module => !module.legacyOptional);
+        const found = plan.rows.filter(row => required.some(module => module.id === row.id)).length;
+        heading.textContent = `Найдено основных модулей: ${found} из ${required.length}. Дополнительных: ${plan.rows.length - found}. Проверь список перед переносом.`;
         preview.append(heading);
         const table = document.createElement('table');
         const head = document.createElement('tr');
@@ -15373,6 +15387,87 @@ function init_saved_texts(runtime) {
 }
 
 
+// ---- src/modules/hide-models.js ----
+
+// Optional feature based on Hide selected model blocks v1.1 (namespace: local).
+function init_hide_models(runtime) {
+    const targetTexts = ['Qwen3 235B 2507', 'Codex 24B'];
+    const hiddenRows = new Map();
+    const pendingRoots = new Set();
+    let scheduled = false;
+
+    function hasTargetText(element) {
+        const text = element.textContent || '';
+        return targetTexts.some(target => text.includes(target));
+    }
+
+    function findRow(element) {
+        for (let current = element; current && current !== document.body; current = current.parentElement) {
+            if (current.tagName === 'DIV' && current.classList.contains('cursor-pointer')
+                && current.classList.contains('px-[18px]') && current.classList.contains('py-[10px]')) return current;
+        }
+        return element.closest('div.cursor-pointer');
+    }
+
+    function hideParagraph(paragraph) {
+        if (!hasTargetText(paragraph)) return;
+        const row = findRow(paragraph);
+        if (!row) return;
+        if (!hiddenRows.has(row)) hiddenRows.set(row, {
+            display: row.style.getPropertyValue('display'),
+            priority: row.style.getPropertyPriority('display'),
+            marker: row.getAttribute('data-hidden-by-tampermonkey'),
+        });
+        row.style.setProperty('display', 'none', 'important');
+        row.dataset.hiddenByTampermonkey = 'true';
+    }
+
+    function scan(root) {
+        // querySelectorAll excludes root itself; newly inserted <p> nodes matter too.
+        if (root.matches?.('p')) hideParagraph(root);
+        root.querySelectorAll?.('p').forEach(hideParagraph);
+    }
+
+    function flush() {
+        scheduled = false;
+        for (const root of pendingRoots) if (root === document || root.isConnected) scan(root);
+        pendingRoots.clear();
+        // React can reuse a model row for a different model. Restore its original styling.
+        for (const [row, previous] of hiddenRows) {
+            if (!row.isConnected) { hiddenRows.delete(row); continue; }
+            if (Array.from(row.querySelectorAll('p')).some(hasTargetText)) continue;
+            if (previous.display) row.style.setProperty('display', previous.display, previous.priority);
+            else row.style.removeProperty('display');
+            if (previous.marker === null) row.removeAttribute('data-hidden-by-tampermonkey');
+            else row.setAttribute('data-hidden-by-tampermonkey', previous.marker);
+            hiddenRows.delete(row);
+        }
+    }
+
+    function schedule() {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(flush);
+    }
+
+    scan(document);
+    const observer = new MutationObserver(mutations => {
+        let changed = false;
+        for (const mutation of mutations) {
+            const target = mutation.target.nodeType === Node.TEXT_NODE ? mutation.target.parentElement : mutation.target;
+            const paragraph = target?.closest?.('p');
+            if (paragraph) { pendingRoots.add(paragraph); changed = true; }
+            for (const node of mutation.addedNodes) {
+                if (node.nodeType === Node.ELEMENT_NODE) { pendingRoots.add(node); changed = true; }
+            }
+            if (mutation.removedNodes.length && hiddenRows.size) changed = true;
+        }
+        if (changed) schedule();
+    });
+    observer.observe(document.body || document.documentElement, { childList: true, subtree: true, characterData: true });
+}
+
+
 const FEATURE_INITIALIZERS = {
 "per-chat": init_per_chat,
 "quick-delete": init_quick_delete,
@@ -15384,7 +15479,8 @@ const FEATURE_INITIALIZERS = {
 "tts": init_tts,
 "emoji": init_emoji,
 "buttons": init_buttons,
-"saved-texts": init_saved_texts
+"saved-texts": init_saved_texts,
+"hide-models": init_hide_models
 };
 
 // ---- src/main.js ----
@@ -15402,6 +15498,8 @@ GM_registerMenuCommand('SpicyChat Tools — настройки и перенос
 const runtime = { getEndpoint: id => store.getEndpoint(id) };
 
 function startFeature(module) {
+    const mainSite = location.hostname === 'spicychat.ai' || location.hostname === 'www.spicychat.ai';
+    if (!mainSite && !module.matchesSubdomains) return;
     if (!store.settings.active || !store.settings.modules[module.id]) return;
     try { FEATURE_INITIALIZERS[module.id](runtime); }
     catch (error) { console.error(`[SpicyChat Tools] Не удалось запустить модуль ${module.id}.`, error); }

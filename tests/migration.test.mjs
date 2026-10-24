@@ -9,7 +9,7 @@ import { catalog, memory, makeLegacy, zip } from './fixtures.mjs';
 test('fresh install stays inactive, with no configured addresses or tokens', () => {
     const store = createStore(catalog, memory());
     assert.equal(store.settings.active, false);
-    assert.equal(Object.keys(store.settings.modules).length, 11);
+    assert.equal(Object.keys(store.settings.modules).length, catalog.length);
     assert.deepEqual(store.settings.endpoints.summary, { url: '', token: '' });
     assert.throws(() => store.getEndpoint('summary'), /Сначала укажи/);
 });
@@ -132,4 +132,29 @@ test('only exact legacy identities and allowlisted data keys are imported', () =
     assert.equal(Object.hasOwn(plan.values, 'spchat-tweaks:settings:v1'), false);
     assert.equal({}.polluted, undefined);
     assert.equal(metadata('not a userscript'), null);
+});
+
+test('upgrading an existing suite enables the new optional feature without changing saved configuration', () => {
+    const previous = {
+        schema: 1, active: true,
+        modules: Object.fromEntries(catalog.filter(module => !module.legacyOptional).map(module => [module.id, module.id !== 'bookmarks'])),
+        endpoints: { summary: { url: 'https://example.test/private-handler', token: 'fixture-local-value' }, tts: { url: '', token: '' } },
+    };
+    const store = createStore(catalog, memory({ [SETTINGS_KEY]: previous }));
+    assert.equal(store.settings.modules['hide-models'], true);
+    assert.equal(store.settings.modules.bookmarks, false);
+    assert.equal(store.settings.active, true);
+    assert.deepEqual(store.settings.endpoints, previous.endpoints);
+    const next = store.settings; next.modules['hide-models'] = false; store.save(next);
+    assert.equal(createStore(catalog, store.gm).settings.modules['hide-models'], false);
+});
+
+test('old 11-script archives remain complete; optional legacy hider state imports when present', () => {
+    const original = planLegacyImport(makeLegacy(), catalog, memory());
+    assert.equal(original.warnings.length, 0);
+    const files = makeLegacy({ includeOptional: true });
+    files.set('hide-models.options.json', JSON.stringify({ settings: { enabled: false } }));
+    const extended = planLegacyImport(files, catalog, memory());
+    assert.equal(extended.rows.length, 12);
+    assert.equal(extended.modules['hide-models'], false);
 });

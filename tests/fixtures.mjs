@@ -18,9 +18,10 @@ export function memory(initial = {}) {
         get length() { return data.size; },
     };
 }
-export function makeLegacy() {
+export function makeLegacy({ includeOptional = false } = {}) {
     const files = new Map();
     for (const module of catalog) {
+        if (module.legacyOptional && !includeOptional) continue;
         const source = `// ==UserScript==\n// @name ${module.legacyName}\n// @namespace ${module.legacyNamespace}\n// @version ${module.version}\n// ==/UserScript==\nconst ENDPOINT_URL = 'https://example.test/${module.id}';\nconst ${'CLIENT_TOKEN'} = 'fixture-value-${module.id}';\nthrow new Error('This code must never be executed');`;
         files.set(`${module.id}.user.js`, source);
         files.set(`${module.id}.options.json`, JSON.stringify({ meta: {}, options: {}, settings: { enabled: module.id !== 'bookmarks' } }));

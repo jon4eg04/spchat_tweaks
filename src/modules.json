@@ -113,5 +113,16 @@
     "storageKeys": [
       "tm-sc-saved-texts-v1:bot:"
     ]
+  },
+  {
+    "id": "hide-models",
+    "title": "Скрытие ненужных моделей",
+    "phase": "dom",
+    "version": "1.1",
+    "legacyName": "Hide selected model blocks",
+    "legacyNamespace": "local",
+    "legacyOptional": true,
+    "matchesSubdomains": true,
+    "storageKeys": []
   }
 ]

@@ -100,7 +100,7 @@ export function planLegacyImport(files, catalog, localStorage) {
         plan.rows.push({ id: module.id, title: module.title, enabled, keys, localKeys, version: meta.version });
     }
     if (!seen.size) throw new Error('В архиве не найдены исходные скрипты SpicyChat из нашего комплекта.');
-    for (const item of catalog) if (!seen.has(item.id)) plan.warnings.push(`${item.title}: скрипт отсутствует в архиве.`);
+    for (const item of catalog) if (!item.legacyOptional && !seen.has(item.id)) plan.warnings.push(`${item.title}: скрипт отсутствует в архиве.`);
     return plan;
 }
 

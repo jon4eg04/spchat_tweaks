@@ -11,6 +11,8 @@ GM_registerMenuCommand('SpicyChat Tools — настройки и перенос
 const runtime = { getEndpoint: id => store.getEndpoint(id) };
 
 function startFeature(module) {
+    const mainSite = location.hostname === 'spicychat.ai' || location.hostname === 'www.spicychat.ai';
+    if (!mainSite && !module.matchesSubdomains) return;
     if (!store.settings.active || !store.settings.modules[module.id]) return;
     try { FEATURE_INITIALIZERS[module.id](runtime); }
     catch (error) { console.error(`[SpicyChat Tools] Не удалось запустить модуль ${module.id}.`, error); }
