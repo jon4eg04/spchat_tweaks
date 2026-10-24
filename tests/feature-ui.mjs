@@ -113,9 +113,10 @@ assert.equal(await page.locator('.tm-sc-response-length-menu-item, .tm-sc-persis
 const draft = page.locator('textarea[placeholder="Message..."]');
 await draft.fill('Saved draft'); await page.locator('.tm-sc-save-current-text').click();
 await page.waitForFunction(bot => __gm.get(`tm-sc-saved-texts-v1:bot:${bot}`)?.length === 1, bot);
+await draft.fill('');
 await page.locator('.tm-sc-open-saved-texts').click();
 await page.locator('.tm-sc-saved-card').waitFor();
-await draft.fill(''); await page.getByRole('button', { name: 'Вставить', exact: true }).click();
+await page.getByRole('button', { name: 'Вставить', exact: true }).click();
 assert.equal(await draft.inputValue(), 'Saved draft');
 await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 await page.keyboard.press('Escape');
