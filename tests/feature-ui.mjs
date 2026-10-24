@@ -366,6 +366,102 @@ await manage.getByText('Alpha text', { exact: true }).waitFor();
 assert.equal(await manage.locator('.tm-sc-message-bookmark-marker').count(), 0);
 await manage.keyboard.press('Escape');
 scenarios.push('spa-route-keeps-bot-library-and-isolates-conversation-state');
+// Native model menus: supplied structural markup with invented descriptions/data.
+const modelPage = await fixture();
+await modelPage.evaluate(() => {
+    localStorage.setItem('tm-sc-per-chat-inference-model-v1', JSON.stringify({ 'old-conversation': 'glm45' }));
+    window.__selectedNative = 'qwenplus-character'; window.__nativeModelClicks = 0;
+    window.__delayedChooser = false;
+    window.__openQuickModels = (nativeMimo = false) => {
+        document.querySelector('#native-model-menu')?.remove();
+        const panel = document.createElement('div'); panel.id = 'native-model-menu'; panel.dataset.testid = 'Dropdown-Panel';
+        panel.style.cssText = 'position:fixed;right:20px;top:20px;background:white;z-index:100;max-width:330px';
+        const list = document.createElement('div'); list.style.cssText = 'display:flex;flex-direction:column'; panel.append(list);
+        const head = document.createElement('div'); head.innerHTML = '<p>Available models</p>'; list.append(head);
+        const choices = [
+            ['Qwen Plus Character', 'qwenplus-character'], ['Glam 5.1', 'glm51'],
+            ['Deepseek V4 Pro', 'deepseek-v4pro'], ['Qwen3 235B 2507', 'unwanted'], ['Codex 24B', 'unwanted-codex'],
+            ...(nativeMimo ? [['MiMo V2.6 Pro', 'mimo-v26-pro']] : []),
+        ];
+        for (const [label, id] of choices) {
+            const row = document.createElement('div'); row.className = 'cursor-pointer px-[18px] py-[10px]';
+            row.dataset.nativeModel = id;
+            row.innerHTML = `<div class="flex"><div><p>${label}</p><div><p>Fixture badge</p></div></div><p class="text-gray-10 line-clamp-2">Invented description</p></div><svg class="lucide-check"></svg>`;
+            row.onclick = () => { window.__selectedNative = id; window.__nativeModelClicks++; panel.remove(); };
+            list.append(row);
+        }
+        const divider = document.createElement('div'); list.append(divider);
+        const explore = document.createElement('div'); explore.className = 'cursor-pointer px-[18px] py-[10px]';
+        explore.innerHTML = '<div><p>Explore all models</p><p>Find your ideal model</p></div>';
+        explore.onclick = () => {
+            panel.remove();
+            const chooser = document.createElement('div'); chooser.id = 'native-full-models'; chooser.style.cssText = 'position:fixed;top:20px;right:20px;z-index:100;background:white';
+            const row = document.createElement('div'); row.className = 'cursor-pointer py-md';
+            row.innerHTML = '<div data-testid="ChatOpenaiModelSelectModelCapabilityGate"><div><p>MiMo V2.6 Pro</p></div><p>Invented full description</p></div>';
+            row.onclick = () => { window.__selectedNative = 'mimo-v26-pro'; window.__nativeModelClicks++; chooser.remove(); };
+            chooser.append(row);
+            window.__showModelChooser = () => document.body.append(chooser);
+            if (!window.__delayedChooser) setTimeout(__showModelChooser, 40);
+        };
+        list.append(explore);
+        const settings = document.createElement('div'); settings.className = explore.className; settings.innerHTML = '<p>Generation Settings</p>'; list.append(settings);
+        document.body.append(panel);
+    };
+    __openQuickModels();
+});
+const quickModelNames = ['Deepseek V4 Pro', 'Qwen Plus Character', 'Glam 5.1', 'MiMo V2.6 Pro'];
+await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').waitFor();
+const readQuickModels = () => modelPage.evaluate(() => [...document.querySelectorAll('#native-model-menu .cursor-pointer')]
+    .filter(row => getComputedStyle(row).display !== 'none' && !['Explore all models', 'Generation Settings'].includes(row.querySelector('p')?.textContent))
+    .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+    .map(row => row.querySelector('p').textContent));
+assert.deepEqual(await readQuickModels(), quickModelNames);
+assert.equal(await modelPage.locator('[data-native-model=unwanted]').isVisible(), false);
+assert.equal(await modelPage.locator('[data-native-model=unwanted-codex]').isVisible(), false);
+assert.equal(await modelPage.locator('[data-sc-quick-model] .lucide-check').count(), 0, 'do not copy the currently selected native model check');
+await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').click();
+await modelPage.waitForFunction(() => __selectedNative === 'mimo-v26-pro' && __nativeModelClicks === 1);
+assert.equal(await modelPage.locator('#native-full-models, #native-model-menu').count(), 0, 'site handlers dismiss both menus');
+await modelPage.evaluate(() => __openQuickModels());
+await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').waitFor();
+await modelPage.evaluate(() => document.body.append(document.createElement('div')));
+await modelPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+assert.equal(await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').count(), 1);
+await modelPage.locator('[data-native-model=deepseek-v4pro]').click();
+assert.equal(await modelPage.evaluate(() => __selectedNative), 'deepseek-v4pro', 'native choices retain their original handler');
+await modelPage.evaluate(() => __openQuickModels(true));
+await modelPage.waitForFunction(() => getComputedStyle(document.querySelector('[data-native-model=unwanted]')).display === 'none');
+assert.equal(await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').count(), 0, 'a native MiMo row replaces the shortcut without a duplicate');
+assert.deepEqual(await readQuickModels(), quickModelNames);
+await modelPage.locator('[data-native-model="mimo-v26-pro"]').click();
+await modelPage.evaluate(() => { __delayedChooser = true; __selectedNative = 'glm51'; __openQuickModels(); });
+await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').press('Enter');
+await modelPage.keyboard.press('Escape');
+await modelPage.evaluate(() => __showModelChooser());
+await modelPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+assert.equal(await modelPage.evaluate(() => __selectedNative), 'glm51', 'Escape cancels pending automatic selection');
+await modelPage.evaluate(() => { document.querySelector('#native-full-models').remove(); __openQuickModels(); });
+await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').click();
+await modelPage.locator('#thread').click({ position: { x: 2, y: 2 } });
+await modelPage.evaluate(() => __showModelChooser());
+await modelPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+assert.equal(await modelPage.evaluate(() => __selectedNative), 'glm51', 'outside pointer interaction cancels pending automatic selection');
+await modelPage.evaluate(() => { document.querySelector('#native-full-models').remove(); __openQuickModels(); });
+await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').click();
+await modelPage.evaluate(() => { history.pushState(null, '', location.pathname + '-different'); __showModelChooser(); });
+await modelPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+assert.equal(await modelPage.evaluate(() => __selectedNative), 'glm51', 'navigation cancels selection intended for the previous chat');
+await modelPage.evaluate(({ bot, chat }) => { document.querySelector('#native-full-models').remove(); history.replaceState(null, '', `/chat/${bot}/${chat}`); }, { bot, chat });
+scenarios.push('four-ordered-native-models', 'native-mimo-click-through', 'native-model-handlers-retained', 'model-menu-reopen-and-native-deduplication', 'pending-model-selection-cancelled-by-escape', 'pending-selection-cancelled-by-pointer-and-route');
+await modelPage.locator('[aria-label=Plus-button]').click();
+await modelPage.locator('.tm-sc-response-length-menu-item').click();
+assert.deepEqual(await modelPage.locator('.tm-sc-response-model-select option').allTextContents(), ['Как выбрано на сайте', ...quickModelNames]);
+await modelPage.locator('.tm-sc-response-model-select').selectOption('mimo-v26-pro');
+await modelPage.locator('.tm-sc-response-length-save').click();
+assert.deepEqual(await modelPage.evaluate(() => JSON.parse(localStorage.getItem('tm-sc-per-chat-inference-model-v1'))), { 'old-conversation': 'glm45', [chat]: 'mimo-v26-pro' });
+await modelPage.evaluate(async chat => fetch('https://prod.nd-api.com/chat', { method: 'POST', body: JSON.stringify({ conversation_id: chat, inference_model: 'glm51', message: 'Model test' }) }), chat);
+assert.equal(JSON.parse(requests.findLast(req => req.url.endsWith('/chat') && req.method === 'POST').body).inference_model, 'mimo-v26-pro');
+scenarios.push('shared-per-chat-model-list', 'per-chat-mimo-request-and-legacy-storage-preservation');
 assert.deepEqual(errors, []);
 console.log(JSON.stringify({ result: 'PASS', scenarios, errors }));
 } finally { await browser.close(); }

@@ -30,13 +30,10 @@ export default function init(runtime) {
     const INITIAL_TOKENS = 300;
     const INFERENCE_MODELS = [
         { id: '', label: 'Как выбрано на сайте' },
-        { id: 'qwenplus-character', label: 'Qwen Plus Character' },
-        { id: 'deepseek-v4pro', label: 'Deepseek V4 Pro' },
-        { id: 'glm51', label: 'Glam 5.1' },
-        { id: 'glm45', label: 'Glam 4.6' },
+        ...runtime.models,
     ];
     const INFERENCE_MODEL_IDS = new Set(
-        INFERENCE_MODELS.map(({ id }) => id).filter(Boolean),
+        [...INFERENCE_MODELS.map(({ id }) => id).filter(Boolean), 'glm45'], // Retain earlier saved overrides.
     );
     const XHR_META = Symbol('tmScResponseLengthRequest');
 
@@ -148,6 +145,7 @@ export default function init(runtime) {
     }
 
     function getModelLabel(modelId) {
+        if (modelId === 'glm45') return 'Glam 4.6 (сохранено ранее)';
         return INFERENCE_MODELS.find(({ id }) => id === modelId)?.label
             || INFERENCE_MODELS[0].label;
     }
@@ -1011,6 +1009,14 @@ export default function init(runtime) {
 
         panel.dataset.conversationId = context?.conversationId || '';
         slider.value = String(savedLimit ?? INITIAL_TOKENS);
+        modelSelect.querySelector('[data-legacy-model]')?.remove();
+        if (savedModel === 'glm45') {
+            const legacy = document.createElement('option');
+            legacy.value = savedModel;
+            legacy.textContent = getModelLabel(savedModel);
+            legacy.dataset.legacyModel = 'true';
+            modelSelect.append(legacy);
+        }
         modelSelect.value = savedModel;
         save.disabled = !context?.conversationId;
         error.hidden = Boolean(context?.conversationId);
@@ -1191,11 +1197,7 @@ export default function init(runtime) {
     }
 
     installNetworkOverride();
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', startUi, { once: true });
-    } else {
-        startUi();
-    }
+    runtime.onDomReady(startUi);
     runtime.dom?.subscribe(scheduleEnsureMenuItems);
 
 }

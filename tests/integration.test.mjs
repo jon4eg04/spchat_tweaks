@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { QUICK_MODELS } from '../src/core/models.js';
 
 test('per-chat module still overrides the page fetch and XHR after gaining a userscript sandbox', async () => {
     const source = await readFile(new URL('../src/modules/per-chat.js', import.meta.url), 'utf8');
@@ -17,17 +18,17 @@ test('per-chat module still overrides the page fetch and XHR after gaining a use
     };
     const storage = new Map([
         ['tm-sc-per-chat-response-length-v1', JSON.stringify({ conversation: 440 })],
-        ['tm-sc-per-chat-inference-model-v1', JSON.stringify({ conversation: 'glm51' })],
+        ['tm-sc-per-chat-inference-model-v1', JSON.stringify({ conversation: 'mimo-v26-pro' })],
         ['tm-sc-per-chat-persistent-command-v1', JSON.stringify({ conversation: 'Keep this command' })],
     ]);
     const sandboxWindow = { fetch: untouchedSandboxFetch };
     const sandbox = {
-        window: sandboxWindow, unsafeWindow: page, URL, Symbol, console,
+        window: sandboxWindow, unsafeWindow: page, URL, Symbol, console, QUICK_MODELS,
         location: { origin: 'https://spicychat.ai', pathname: '/chat/bot/conversation' },
         localStorage: { getItem: key => storage.get(key) ?? null },
         document: { readyState: 'loading', addEventListener() {} },
     };
-    vm.runInNewContext(source.replace('export default ', '') + '\ninit({});', sandbox);
+    vm.runInNewContext(source.replace('export default ', '') + '\ninit({ models: QUICK_MODELS, onDomReady() {} });', sandbox);
     assert.equal(sandboxWindow.fetch, untouchedSandboxFetch);
     const body = JSON.stringify({ conversation_id: 'conversation', inference_settings: { max_new_tokens: 100 }, inference_model: 'old', message: 'Hello' });
     await page.fetch('https://prod.nd-api.com/chat', { method: 'POST', body });
@@ -35,7 +36,7 @@ test('per-chat module still overrides the page fetch and XHR after gaining a use
     assert.equal(calls.length, 2);
     for (const call of calls) {
         assert.equal(call.inference_settings.max_new_tokens, 440);
-        assert.equal(call.inference_model, 'glm51');
+        assert.equal(call.inference_model, 'mimo-v26-pro');
         assert.equal(call.message, 'Hello\n\n/cmd Keep this command');
     }
 });
@@ -63,6 +64,7 @@ test('only the legacy hider runs on additional SpicyChat subdomains', async () =
         createStore: () => ({ settings: { active: true, modules: Object.fromEntries(catalog.map(module => [module.id, true])) } }),
         createInterface: () => ({ start() {}, open() {} }),
         createDomAdapters: () => ({}),
+        QUICK_MODELS, onDomReady: callback => callback(),
         location: { hostname: 'other.spicychat.ai' }, localStorage: {},
         document: { readyState: 'complete' }, GM_registerMenuCommand() {}, console,
     });
@@ -79,6 +81,7 @@ test('a settings-window error cannot prevent composer features from starting', a
         createStore: () => ({ settings: { active: true, modules: Object.fromEntries(catalog.map(module => [module.id, true])) } }),
         createInterface: () => ({ start() { throw new Error('settings fixture failure'); }, open() {} }),
         createDomAdapters: () => ({}),
+        QUICK_MODELS, onDomReady: callback => callback(),
         location: { hostname: 'spicychat.ai' }, localStorage: {},
         document: { readyState: 'complete' }, GM_registerMenuCommand() {}, console: { error() {} },
     });

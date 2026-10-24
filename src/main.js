@@ -8,7 +8,7 @@ const gm = {
 const store = createStore(MODULE_CATALOG, gm);
 const controls = createInterface({ store, catalog: MODULE_CATALOG, storage: localStorage, version: SUITE_VERSION });
 GM_registerMenuCommand('SpicyChat Tools — настройки и перенос', controls.open);
-const runtime = { getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters() };
+const runtime = { getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters(), models: QUICK_MODELS, onDomReady };
 const started = new Set();
 
 function startFeature(module) {
@@ -27,5 +27,4 @@ function startDomFeatures() {
     catch (error) { console.error('[SpicyChat Tools] Не удалось открыть настройки. Остальные функции продолжают запуск.', error); }
     for (const module of MODULE_CATALOG) if (module.phase === 'dom') startFeature(module);
 }
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startDomFeatures, { once: true });
-else startDomFeatures();
+onDomReady(startDomFeatures);

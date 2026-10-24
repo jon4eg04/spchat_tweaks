@@ -185,3 +185,30 @@ export function createDomAdapters() {
         },
     };
 }
+
+// Userscript injection can miss DOMContentLoaded. Keep the idle-phase features
+// independent of that single event without delaying the early API interceptors.
+export function onDomReady(callback) {
+    let finished = false;
+    let timer = null;
+    const check = () => {
+        if (finished) return;
+        if (timer !== null) window.clearTimeout(timer);
+        if (!document.body || document.readyState === 'loading') {
+            timer = window.setTimeout(check, 100);
+            return;
+        }
+        finished = true;
+        timer = null;
+        document.removeEventListener('DOMContentLoaded', check);
+        document.removeEventListener('readystatechange', check);
+        window.removeEventListener('load', check);
+        window.removeEventListener('pageshow', check);
+        callback();
+    };
+    document.addEventListener('DOMContentLoaded', check);
+    document.addEventListener('readystatechange', check);
+    window.addEventListener('load', check);
+    window.addEventListener('pageshow', check);
+    check();
+}

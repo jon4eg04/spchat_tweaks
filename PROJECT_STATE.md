@@ -6,11 +6,11 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Current implementation
 
-- Version 1.0.5. Public source and installation files in this repository.
+- Version 1.0.6. Public source and installation files in this repository.
 - User requested no personal-name attribution anywhere in published files. The author header is omitted, AGENTS.md forbids future personal-name attribution, and public-file checks reject author headers.
 - Added hide-models, based on the user's Hide selected model blocks v1.1: hides Qwen3 235B 2507 and Codex 24B, handles dynamically inserted paragraphs and text changes, and restores a hidden row if the site reuses it for another model. Independently toggled and enabled by default on upgrade.
 - The additional legacy hider is optional in ZIP migration. Original eleven-script backups are still complete; no repeated import is needed for already-migrated users.
-- The user reports the initial migration appears to work. The per-chat feature already has a custom model dropdown (Qwen Plus Character, Deepseek V4 Pro, Glam 5.1, Glam 4.6). A separate historical script adding a model to the site's native selector has not been found in saved files/history; do not invent one.
+- The user reports the initial migration appears to work. The per-chat feature has a custom model dropdown; its current choices share src/core/models.js with the native quick menu. A separate historical script adding a model to the site's native selector has not been found in saved files/history; do not invent one.
 - Original modules remain separate source files with stable data keys. Version 1.0.3 adds shared native-menu discovery for inline and portal layouts, role-based items and text/icon fallbacks. Bookmarks no longer require saved-texts, and saving a history message no longer requires quick-delete. Menu ownership follows the selected message even when a portal is reused.
 - Version 1.0.4 fixes a 1.0.3 regression: a visible native image button was mistaken for a plus menu, inserting token/model and command items beside the composer. Discovery now rejects individual buttons, tooltip-only wrappers, composer ancestors and closed/hidden menus. Unmarked plus menus require multiple native actions including search/command. The old broad per-chat and chat-menu fallbacks are removed.
 - Response/CMD popups dismiss on window-captured pointerdown and click, including click-only activation and site handlers that stop propagation.
@@ -42,7 +42,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Next steps
 
-The user updates the combined script to 1.0.5 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Future native-model-menu additions require finding their exact previous code or requirements.
+The user updates the combined script to 1.0.6 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Verify native MiMo selection in the real account; local/browser CI uses synthetic site handlers.
 
 ## Full original-source audit (1.0.5)
 
@@ -54,3 +54,12 @@ The user updates the combined script to 1.0.5 and reloads SpicyChat. No repeated
 - Additional tests cover saved-text pin/search/confirmed deletion, bookmark rename/deletion, branch collapse/rename/search, conversation changes, working controls after composer remount and actual document-start before body.
 - Browser scripts support TEST_BROWSER=firefox; CI runs both Chromium and Firefox before publishing. The local container requires the test-only Firefox sandbox override; production userscript behavior is unaffected.
 - Preserve original behavior rather than redesigning it. New deviations require a concrete page change or reproduced bug, documentation and a regression test; ask the user when intent is unclear.
+
+## Native-model-menu update (1.0.6)
+
+- Shared ordered catalog: Deepseek V4 Pro (`deepseek-v4pro`), Qwen Plus Character (`qwenplus-character`), Glam 5.1 (`glm51`), MiMo V2.6 Pro (`mimo-v26-pro`). The MiMo ID was supplied by the user after inspecting a native generation request. Never infer future model IDs from labels.
+- hide-models retains its stable module/legacy identity and optional toggle. It hides Qwen3 235B 2507/Codex 24B, filters the native quick model rows to the requested four, and adds missing choices using native row styling. The shortcut opens Explore all models and clicks the actual capability-gated native model card; it does not copy React event handlers or guess account-state APIs. It cancels on Escape/user pointer interaction/route change, times out after 5 seconds, and leaves the native chooser available on failure.
+- Existing native rows retain their handlers and are visually ordered using flex order. If the site adds MiMo itself, the shortcut is removed. Per-chat retains the default-site sentinel. Existing glm45 overrides survive saves in other chats and appear only in affected chats as a legacy option.
+- Supplied HTML shows early styles but no SC Tools/DOM-phase controls/hiding markers; it cannot establish the live cause. Shared onDomReady now has a timer fallback in addition to DOMContentLoaded/readystatechange/load/pageshow. Per-chat UI uses it too; early interceptors remain synchronous.
+- Lifecycle tests cover absent ready events. The document-start browser fixture verifies startup and Qwen3 hiding with all ready listeners suppressed. Feature checks cover native MiMo handler delegation, exact list/order, hidden rows, reopen/deduplication, Escape cancellation, per-chat MiMo requests and legacy storage preservation in Chromium/Firefox.
+- Private source HTML is not committed. No signed-in backend selection was exercised; the user should verify the native menu on the live site after updating.

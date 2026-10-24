@@ -37,7 +37,7 @@ const header = `// ==UserScript==
 // retains their function scopes and builds one local file, with no runtime imports.
 const stripImports = source => source.replace(/^import .+ from ['"].+['"];\r?\n/gm, '');
 const parts = [header, '(function () {\n\'use strict\';', `const SUITE_VERSION = ${JSON.stringify(version)};`, `const MODULE_CATALOG = ${JSON.stringify(catalog, null, 2)};`];
-for (const path of ['settings', 'zip', 'migration', 'ui', 'dom']) {
+for (const path of ['settings', 'zip', 'migration', 'ui', 'dom', 'models']) {
     parts.push(`// ---- src/core/${path}.js ----`, stripImports(await read(`src/core/${path}.js`)).replace(/^export /gm, ''));
 }
 const functions = [];

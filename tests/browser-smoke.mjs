@@ -108,8 +108,12 @@ await disabled.waitForFunction(() => document.querySelector('#tm-sc-emoji-trigge
 assert.notEqual(await disabled.locator('#disabled-hider-row').evaluate(node => getComputedStyle(node).display), 'none');
 // Exercise the actual document-start timing, before the page has a body.
 const earlyContext = await browser.newContext();
-await earlyContext.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><div style="display:flex"><div class="w-full flex"><textarea placeholder="Message..."></textarea></div></div><button aria-label="Plus-button">+</button></body></html>' }));
+await earlyContext.route('**/*', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body><div style="display:flex"><div class="w-full flex"><textarea placeholder="Message..."></textarea></div></div><button aria-label="Plus-button">+</button><div data-testid="Dropdown-Panel"><div class="flex flex-col"><div id="early-qwen-row" class="cursor-pointer px-[18px] py-[10px]"><div class="flex flex-col"><div class="flex"><p>Qwen3 235B 2507</p></div><p>Invented model description</p></div></div><div id="early-allowed-row" class="cursor-pointer px-[18px] py-[10px]"><p>Qwen Plus Character</p></div></div></div></body></html>' }));
 const earlySetup = () => {
+    const docAdd = document.addEventListener.bind(document);
+    const winAdd = window.addEventListener.bind(window);
+    document.addEventListener = (type, ...args) => { if (!['DOMContentLoaded', 'readystatechange'].includes(type)) docAdd(type, ...args); };
+    window.addEventListener = (type, ...args) => { if (!['load', 'pageshow'].includes(type)) winAdd(type, ...args); };
     const db = new Map([['spchat-tweaks:settings:v1', { active: true, modules: { summary: false, tts: false }, endpoints: {} }]]);
     window.unsafeWindow = window;
     window.GM_getValue = (key, fallback) => db.has(key) ? structuredClone(db.get(key)) : fallback;
@@ -127,8 +131,10 @@ for (const selector of ['#spchat-tools-settings', '.tm-sc-emoji-trigger', '.tm-s
     await early.locator(selector).waitFor({ state: selector === '#spchat-tools-settings' ? 'attached' : 'visible' });
     assert.equal(await early.locator(selector).count(), 1);
 }
+await early.waitForFunction(() => getComputedStyle(document.querySelector('#early-qwen-row')).display === 'none');
+assert.notEqual(await early.locator('#early-allowed-row').evaluate(node => getComputedStyle(node).display), 'none');
 await earlyContext.close();
 assert.equal(errors.length, 0, errors.join('\n'));
 await active.screenshot({ path: root + 'test-results/modules.png' });
-console.log(JSON.stringify({ result: 'PASS', scenarios: ['fresh-install-ui', 'activation-confirmation', 'zip-picker-preview-import', 'all-modules-start', 'combined-fetch-chain', 'per-chat-generation-rewrite', 'hidden-models-initial-and-dynamic', 'reused-model-row-restored', 'model-hiding-toggle', 'document-start-before-body'], errors }));
+console.log(JSON.stringify({ result: 'PASS', scenarios: ['fresh-install-ui', 'activation-confirmation', 'zip-picker-preview-import', 'all-modules-start', 'combined-fetch-chain', 'per-chat-generation-rewrite', 'hidden-models-initial-and-dynamic', 'reused-model-row-restored', 'model-hiding-toggle', 'document-start-before-body-with-missing-ready-events'], errors }));
 } finally { await browser.close(); }
