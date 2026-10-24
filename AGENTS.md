@@ -1,6 +1,7 @@
 # Working rules
 
 - Read README.md and PROJECT_STATE.md before changing behavior.
+- Never include the user's personal name in author metadata, credits, comments, or documentation. Omit @author headers in this project, including generated files.
 - Edit source files in src/, never hand-edit dist/. Build with npm run build.
 - Preserve the original feature behavior unless the requested change requires otherwise. Modules keep separate scopes and can be toggled independently.
 - Keep early network interceptors synchronous at document-start. The per-chat module previously ran with @grant none and must still intercept the page's fetch and XMLHttpRequest via unsafeWindow.

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const rules = [
+    ['author metadata is intentionally omitted', /^\/\/\s*@author\s+.+$/m],
     ['provider API credential', /\b(?:sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16}|AIza[A-Za-z0-9_-]{30,})/],
     ['hardcoded 64-digit token', /['"][0-9a-fA-F]{64}['"]/],
     ['hardcoded client token', /\b(?:CLIENT_TOKEN|API_KEY|ACCESS_TOKEN)\s*=\s*['"][^'"]+['"]/],

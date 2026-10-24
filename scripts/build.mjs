@@ -14,7 +14,6 @@ const header = `// ==UserScript==
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
 // @version      ${version}
 // @description  Единый комплект из ${catalog.length} функций SpicyChat с локальными настройками и переносом старых данных.
-// @author       ChatGPT & Женя
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
 // @match        https://spicychat.ai/*

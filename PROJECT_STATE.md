@@ -6,7 +6,8 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Current implementation
 
-- Version 1.0.1. Public source and installation files in this repository.
+- Version 1.0.2. Public source and installation files in this repository.
+- User requested no personal-name attribution anywhere in published files. The author header is omitted, AGENTS.md forbids future personal-name attribution, and public-file checks reject author headers.
 - Added hide-models, based on the user's Hide selected model blocks v1.1: hides Qwen3 235B 2507 and Codex 24B, handles dynamically inserted paragraphs and text changes, and restores a hidden row if the site reuses it for another model. Independently toggled and enabled by default on upgrade.
 - The additional legacy hider is optional in ZIP migration. Original eleven-script backups are still complete; no repeated import is needed for already-migrated users.
 - The user reports the initial migration appears to work. The per-chat feature already has a custom model dropdown (Qwen Plus Character, Deepseek V4 Pro, Glam 5.1, Glam 4.6). A separate historical script adding a model to the site's native selector has not been found in saved files/history; do not invent one.
@@ -34,4 +35,4 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Next steps
 
-The user updates the combined script to 1.0.1, disables the separate legacy hider if still present, and reloads SpicyChat. Existing data/configuration are retained. Future native-model-menu additions require finding their exact previous code or requirements.
+The user updates the combined script to 1.0.2, disables the separate legacy hider if still present, and reloads SpicyChat. Existing data/configuration are retained. Future native-model-menu additions require finding their exact previous code or requirements.
