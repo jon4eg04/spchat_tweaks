@@ -892,8 +892,7 @@ export default function init(runtime) {
     }
 
     function cloneMenuButton(template) {
-        const button = template.cloneNode(true);
-        button.className = template.className;
+        const button = runtime.dom.cloneMenuButton(template);
         button.classList.remove(BOOKMARK_MENU_ITEM_CLASS, MENU_ITEM_CLASS);
         button.classList.add(MENU_ITEM_CLASS);
         button.removeAttribute('target');
@@ -912,6 +911,8 @@ export default function init(runtime) {
     }
 
     function findChatMenu(dropdown) {
+        const portal = runtime.dom?.chatMenu(dropdown);
+        if (portal) return portal;
         const wrapper = dropdown?.parentElement;
         if (wrapper) {
             const directSibling = dropdown.nextElementSibling;
@@ -970,7 +971,7 @@ export default function init(runtime) {
                 const template = (
                     menu.querySelector(`.${BOOKMARK_MENU_ITEM_CLASS}`)
                     || menu.querySelector('button[aria-label="View Saved Chats" i]')
-                    || menu.querySelector('button')
+                    || menu.querySelector('button, [role="menuitem"]')
                 );
                 if (!template) continue;
 
@@ -1571,4 +1572,6 @@ export default function init(runtime) {
         document.addEventListener('DOMContentLoaded', startDomFeatures, { once: true });
     }
     startDomFeatures();
+    runtime.dom?.subscribe(scheduleEnsure);
+
 }

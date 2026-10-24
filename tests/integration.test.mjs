@@ -62,8 +62,25 @@ test('only the legacy hider runs on additional SpicyChat subdomains', async () =
         FEATURE_INITIALIZERS: Object.fromEntries(catalog.map(module => [module.id, () => calls.push(module.id)])),
         createStore: () => ({ settings: { active: true, modules: Object.fromEntries(catalog.map(module => [module.id, true])) } }),
         createInterface: () => ({ start() {}, open() {} }),
+        createDomAdapters: () => ({}),
         location: { hostname: 'other.spicychat.ai' }, localStorage: {},
         document: { readyState: 'complete' }, GM_registerMenuCommand() {}, console,
     });
     assert.deepEqual(calls, ['hide-models']);
+});
+
+test('a settings-window error cannot prevent composer features from starting', async () => {
+    const source = await readFile(new URL('../src/main.js', import.meta.url), 'utf8');
+    const catalog = [{ id: 'emoji', phase: 'dom' }, { id: 'buttons', phase: 'dom' }, { id: 'saved-texts', phase: 'dom' }];
+    const calls = [];
+    vm.runInNewContext(source, {
+        MODULE_CATALOG: catalog, SUITE_VERSION: 'test',
+        FEATURE_INITIALIZERS: Object.fromEntries(catalog.map(module => [module.id, () => calls.push(module.id)])),
+        createStore: () => ({ settings: { active: true, modules: Object.fromEntries(catalog.map(module => [module.id, true])) } }),
+        createInterface: () => ({ start() { throw new Error('settings fixture failure'); }, open() {} }),
+        createDomAdapters: () => ({}),
+        location: { hostname: 'spicychat.ai' }, localStorage: {},
+        document: { readyState: 'complete' }, GM_registerMenuCommand() {}, console: { error() {} },
+    });
+    assert.deepEqual(calls, ['emoji', 'buttons', 'saved-texts']);
 });

@@ -731,6 +731,9 @@ export default function init(runtime) {
     }
 
     function findRemoveMessagesMenuItem() {
+        const menu = runtime.dom?.chatMenu(findChatDropdownButton());
+        const action = runtime.dom?.findAction(menu, 'remove', true);
+        if (action) return action;
         return findVisibleButton(button => {
             const ariaLabel = normalizeButtonText(
                 button.getAttribute('aria-label')

@@ -13,7 +13,6 @@ export default function init(runtime) {
     const STYLE_ID = 'tm-sc-saved-texts-style';
     const STORAGE_PREFIX = 'tm-sc-saved-texts-v1:bot:';
     const DELETE_CONFIRM_MS = 2600;
-    const MESSAGE_MENU_COPY_SELECTOR = 'button[aria-label="Copy" i]';
     const MESSAGE_DROPDOWN_SELECTOR = 'button[aria-label="message-dropdown" i]';
     const MESSAGE_TEXT_CLASS_TOKEN = '[overflow-wrap:anywhere]';
     const MESSAGE_SAVE_ITEM_CLASS = 'tm-sc-save-history-message';
@@ -552,30 +551,10 @@ export default function init(runtime) {
         toolbarFlashTimers.set(button, timer);
     }
 
-    function findMessageMenuContext(copyButton) {
-        const controls = copyButton.closest('.sc-quick-delete-controls');
-        if (!controls) return null;
-
-        let menu = copyButton.parentElement;
-        while (menu && menu.parentElement !== controls) menu = menu.parentElement;
-        if (!menu || menu.parentElement !== controls) return null;
-
-        return { controls, menu };
-    }
-
     function findMessageTextContainer(controls) {
-        let ancestor = controls.parentElement;
-
-        for (let depth = 0; ancestor && depth < 8; depth += 1, ancestor = ancestor.parentElement) {
-            if (ancestor.classList?.contains(MESSAGE_TEXT_CLASS_TOKEN)) return ancestor;
-
-            const candidate = Array.from(ancestor.querySelectorAll('[class]')).find((element) => (
-                element.classList.contains(MESSAGE_TEXT_CLASS_TOKEN)
-            ));
-            if (candidate) return candidate;
-        }
-
-        return null;
+        const message = controls.closest('[id^="message-"]');
+        return message && Array.from(message.querySelectorAll('[class]')).find(element =>
+            element.classList.contains(MESSAGE_TEXT_CLASS_TOKEN)) || null;
     }
 
     function serializeFormattedNode(node) {
@@ -676,6 +655,7 @@ export default function init(runtime) {
 
         const label = button.querySelector('p') || button.querySelector('span');
         if (label) label.textContent = stateData.label;
+        else { const span = document.createElement('span'); span.textContent = stateData.label; button.append(span); }
     }
 
     async function storeSavedText(botId, text) {
@@ -735,23 +715,20 @@ export default function init(runtime) {
     }
 
     function ensureMessageSaveMenuItems() {
-        for (const copyButton of document.querySelectorAll(MESSAGE_MENU_COPY_SELECTOR)) {
-            const context = findMessageMenuContext(copyButton);
-            if (!context || context.menu.querySelector(`.${MESSAGE_SAVE_ITEM_CLASS}`)) continue;
-
-            const template = context.menu.querySelector('button[aria-label="Edit" i]') || copyButton;
-            const button = template.cloneNode(true);
+        for (const context of runtime.dom?.messageMenus() || []) {
+            if (context.menu.querySelector(`.${MESSAGE_SAVE_ITEM_CLASS}`)) continue;
+            const template = runtime.dom.findAction(context.menu, 'edit') || context.template;
+            const button = runtime.dom.cloneMenuButton(template);
             button.classList.add(MESSAGE_SAVE_ITEM_CLASS);
-            button.removeAttribute('target');
-            button.disabled = false;
             setMessageMenuButtonState(button, 'idle');
             button.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation();
-                void saveHistoryMessage(button, context.controls);
+                const message = runtime.dom.messageFor(button);
+                const controls = message?.querySelector(MESSAGE_DROPDOWN_SELECTOR)?.parentElement;
+                if (controls) void saveHistoryMessage(button, controls);
             });
-
             context.menu.appendChild(button);
         }
     }
@@ -871,7 +848,7 @@ export default function init(runtime) {
         if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
         const selector = [
             TEXTAREA_SELECTOR,
-            MESSAGE_MENU_COPY_SELECTOR,
+            'button[aria-label="Copy" i], [role="menu"]',
             `#${TOOLBAR_ID}`,
             EMOJI_WRAP_SELECTOR,
         ].join(', ');
@@ -1310,4 +1287,6 @@ export default function init(runtime) {
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) ensureDomFeatures();
     });
+    runtime.dom?.subscribe(scheduleEnsureToolbar);
+
 }

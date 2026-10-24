@@ -393,11 +393,13 @@ export default function init(runtime) {
         if (relevant) scheduleEnsureActionButtons();
     }
 
-    function waitForVisibleElement(selector, timeout = 1600) {
+    function waitForVisibleElement(selector, timeout = 1600, action = null) {
         const startedAt = Date.now();
         return new Promise((resolve) => {
             const check = () => {
-                const element = findVisibleElement(selector);
+                const plus = findVisibleElement(PLUS_BUTTON_SELECTOR);
+                const element = findVisibleElement(selector)
+                    || (action && runtime.dom?.findAction(runtime.dom.plusMenu(plus), action, true));
                 if (element) {
                     resolve(element);
                     return;
@@ -427,13 +429,15 @@ export default function init(runtime) {
         if (button) button.classList.add('is-busy');
 
         try {
-            const nativeButton = findNativeButtonInComposer(nativeSelector);
+            const action = actionName === 'Suggest Reply' ? 'suggest' : 'image';
+            const nativeButton = findNativeButtonInComposer(nativeSelector) || runtime.dom?.composerAction(action);
             if (nativeButton) {
                 if (!nativeButton.disabled) nativeButton.click();
                 return;
             }
 
-            let menuItem = findVisibleElement(menuSelector);
+            const plus = findVisibleElement(PLUS_BUTTON_SELECTOR);
+            let menuItem = findVisibleElement(menuSelector) || runtime.dom?.findAction(runtime.dom.plusMenu(plus), action, true);
             if (!menuItem) {
                 const plusButton = findVisibleElement(PLUS_BUTTON_SELECTOR);
                 if (!plusButton) {
@@ -443,7 +447,7 @@ export default function init(runtime) {
                 }
 
                 plusButton.click();
-                menuItem = await waitForVisibleElement(menuSelector);
+                menuItem = await waitForVisibleElement(menuSelector, 1600, action);
             }
 
             if (menuItem && !menuItem.disabled) menuItem.click();
@@ -527,4 +531,6 @@ export default function init(runtime) {
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) ensureDomFeatures();
     });
+    runtime.dom?.subscribe(scheduleEnsureActionButtons);
+
 }

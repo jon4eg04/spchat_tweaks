@@ -262,7 +262,7 @@ export function createInterface({ store, catalog, storage, version, reload = () 
         controls.append(actions);
         status = document.createElement('div'); status.className = 'status'; status.setAttribute('role', 'status');
         status.setAttribute('aria-live', 'polite'); form.append(status);
-        document.documentElement.append(host);
+        (document.body || document.documentElement).append(host);
         fillForm();
         const imported = store.gm.get(MIGRATION_KEY, null);
         if (imported) message(`Последний перенос: ${new Date(imported.at).toLocaleString('ru-RU')}.`);

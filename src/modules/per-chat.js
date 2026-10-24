@@ -3,7 +3,7 @@ export default function init(runtime) {
     'use strict';
 
     // Previously @grant none: network overrides must still target the page.
-    const window = typeof unsafeWindow !== 'undefined' ? unsafeWindow : globalThis.window;
+    const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     const INSTANCE_KEY = '__tmScPerChatResponseLengthV1';
     if (window[INSTANCE_KEY]) return;
@@ -285,9 +285,9 @@ export default function init(runtime) {
 
     function installNetworkOverride() {
         try {
-            const originalFetch = window.fetch;
+            const originalFetch = pageWindow.fetch;
             if (typeof originalFetch === 'function') {
-                window.fetch = function (input, options) {
+                pageWindow.fetch = function (input, options) {
                     const method = options?.method || input?.method || 'GET';
                     const rawUrl = readRequestUrl(input);
                     if (!isGenerationRequest(rawUrl, method)) {
@@ -322,7 +322,7 @@ export default function init(runtime) {
                                     return Reflect.apply(originalFetch, receiver, originalArguments);
                                 }
 
-                                const RequestConstructor = window.Request;
+                                const RequestConstructor = pageWindow.Request;
                                 if (typeof RequestConstructor !== 'function') {
                                     return Reflect.apply(originalFetch, receiver, originalArguments);
                                 }
@@ -345,7 +345,7 @@ export default function init(runtime) {
         }
 
         try {
-            const prototype = window.XMLHttpRequest?.prototype;
+            const prototype = pageWindow.XMLHttpRequest?.prototype;
             if (!prototype) return;
             const originalOpen = prototype.open;
             const originalSend = prototype.send;
@@ -714,6 +714,8 @@ export default function init(runtime) {
     }
 
     function findOpenPlusMenu(plusButton) {
+        const portal = runtime.dom?.plusMenu(plusButton);
+        if (portal) return portal;
         let host = plusButton?.parentElement || null;
         for (let depth = 0; host && depth < 4; depth += 1) {
             for (const child of host.children) {
@@ -795,7 +797,9 @@ export default function init(runtime) {
         for (const plusButton of document.querySelectorAll(PLUS_BUTTON_SELECTOR)) {
             const menu = findOpenPlusMenu(plusButton);
             if (!menu) continue;
-            const referenceButton = menu.querySelector(NATIVE_MENU_ITEM_SELECTOR);
+            const referenceButton = menu.querySelector(NATIVE_MENU_ITEM_SELECTOR)
+                || runtime.dom?.findAction(menu, 'image') || runtime.dom?.findAction(menu, 'command')
+                || runtime.dom?.findAction(menu, 'suggest') || runtime.dom?.findAction(menu, 'search');
             if (!referenceButton) continue;
 
             const existingItem = menu.querySelector(`.${MENU_ITEM_CLASS}`);
@@ -1202,4 +1206,6 @@ export default function init(runtime) {
     } else {
         startUi();
     }
+    runtime.dom?.subscribe(scheduleEnsureMenuItems);
+
 }

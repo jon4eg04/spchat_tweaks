@@ -900,7 +900,7 @@ export default function init(runtime) {
     }
 
     function getMessageRoot(node) {
-        const root = node?.closest?.(MESSAGE_SELECTOR);
+        const root = node?.closest?.(MESSAGE_SELECTOR) || runtime.dom?.messageFor(node);
         return root && root.id ? root : null;
     }
 
@@ -965,8 +965,7 @@ export default function init(runtime) {
     }
 
     function cloneMenuButton(template, className, ariaLabel, labelText, icon) {
-        const button = template.cloneNode(true);
-        button.className = template.className;
+        const button = runtime.dom.cloneMenuButton(template);
         button.classList.remove(
             'tm-sc-save-history-message',
             MESSAGE_MENU_ITEM_CLASS,
@@ -986,6 +985,7 @@ export default function init(runtime) {
         const labels = Array.from(button.querySelectorAll('p, span'));
         const primaryLabel = labels[0];
         if (primaryLabel) primaryLabel.textContent = labelText;
+        else { const span = document.createElement('span'); span.textContent = labelText; button.append(span); }
         for (const extra of labels.slice(1)) extra.remove();
 
         return button;
@@ -997,10 +997,8 @@ export default function init(runtime) {
     }
 
     function ensureMessageMenuItems() {
-        for (const saveItem of document.querySelectorAll(SAVED_TEXT_MENU_ITEM_SELECTOR)) {
-            const message = getMessageRoot(saveItem);
-            const menu = saveItem.parentElement;
-            if (!message || !menu) continue;
+        for (const { menu, template } of runtime.dom?.messageMenus() || []) {
+            const saveItem = menu.querySelector(SAVED_TEXT_MENU_ITEM_SELECTOR) || template;
 
             let button = menu.querySelector(`.${MESSAGE_MENU_ITEM_CLASS}`);
             if (!button) {
@@ -1029,6 +1027,8 @@ export default function init(runtime) {
     }
 
     function findChatMenu(dropdown) {
+        const portal = runtime.dom?.chatMenu(dropdown);
+        if (portal) return portal;
         const wrapper = dropdown?.parentElement;
         if (wrapper) {
             const directSibling = dropdown.nextElementSibling;
@@ -1091,7 +1091,7 @@ export default function init(runtime) {
             let button = menu.querySelector(`.${CHAT_MENU_ITEM_CLASS}`);
             if (!button) {
                 const template = menu.querySelector('button[aria-label="View Saved Chats" i]')
-                    || menu.querySelector('button');
+                    || menu.querySelector('button, [role="menuitem"]');
                 if (!template) continue;
 
                 button = cloneMenuButton(
@@ -2409,4 +2409,6 @@ export default function init(runtime) {
         document.addEventListener('DOMContentLoaded', startDomFeatures, { once: true });
     }
     startDomFeatures();
+    runtime.dom?.subscribe(scheduleEnsure);
+
 }
