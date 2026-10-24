@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SpicyChat Tools
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
-// @version      1.0.2
+// @version      1.0.3
 // @description  Единый комплект из 12 функций SpicyChat с локальными настройками и переносом старых данных.
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
@@ -27,7 +27,7 @@
 (function () {
 'use strict';
 
-const SUITE_VERSION = "1.0.2";
+const SUITE_VERSION = "1.0.3";
 
 const MODULE_CATALOG = [
   {
@@ -787,7 +787,7 @@ function createInterface({ store, catalog, storage, version, reload = () => loca
         controls.append(actions);
         status = document.createElement('div'); status.className = 'status'; status.setAttribute('role', 'status');
         status.setAttribute('aria-live', 'polite'); form.append(status);
-        document.documentElement.append(host);
+        (document.body || document.documentElement).append(host);
         fillForm();
         const imported = store.gm.get(MIGRATION_KEY, null);
         if (imported) message(`Последний перенос: ${new Date(imported.at).toLocaleString('ru-RU')}.`);
@@ -810,6 +810,170 @@ function createInterface({ store, catalog, storage, version, reload = () => loca
 }
 
 
+// ---- src/core/dom.js ----
+
+// Shared discovery for inline menus and portals. No page data or credentials persist here.
+function createDomAdapters() {
+    const triggerSelectors = {
+        message: 'button[aria-label="message-dropdown" i]',
+        chat: 'button[aria-label="chat-dropdown" i]',
+        plus: 'button[aria-label="Plus-button" i], button[aria-label="Plus button" i]',
+    };
+    const items = 'button, [role="menuitem"]';
+    const active = { message: null, chat: null, plus: null };
+    const owners = new WeakMap();
+    const listeners = new Set();
+    let frame = null;
+    let observing = false;
+
+    const visible = node => {
+        if (!node?.isConnected || node.closest('[hidden],[aria-hidden="true"]')) return false;
+        const style = getComputedStyle(node);
+        const rect = node.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    const native = node => !node.closest('[id^="tm-sc-"], #spchat-tools-settings')
+        && !Array.from(node.classList).some(name => name.startsWith('tm-sc-') || name.startsWith('sc-quick-'));
+    const names = {
+        copy: /^(copy|copy message|копировать|скопировать|скопировать сообщение)$/i,
+        edit: /^(edit|edit message|редактировать|изменить)$/i,
+        image: /^(generate image|image generation|создать изображение|сгенерировать изображение)$/i,
+        suggest: /^(autogenerate|suggest reply|suggest response|предложить ответ|сгенерировать ответ)$/i,
+        search: /^(web search|search the web|поиск в интернете)$/i,
+        command: /^(command \(ooc\)|command|команда \(ooc\)|команда)$/i,
+        remove: /^(remove messages|удалить сообщения)$/i,
+        saved: /^(view saved chats|saved chats|сохранённые чаты|сохраненные чаты)$/i,
+        newChat: /^(start new chat|new chat|начать новый чат|новый чат)$/i,
+    };
+    const icons = { copy: '.lucide-copy', edit: '.lucide-pencil, .lucide-square-pen', image: '.lucide-image, .lucide-image-plus', suggest: '.lucide-lightbulb', search: '.lucide-globe', command: '.lucide-terminal' };
+    function isAction(node, action) {
+        if (!native(node)) return false;
+        const labels = [node.getAttribute('aria-label'), node.getAttribute('title'), node.textContent]
+            .filter(Boolean).map(text => text.replace(/\s+/g, ' ').trim());
+        if (labels.some(label => names[action]?.test(label))) return true;
+        if (action === 'image' && node.getAttribute('data-testid') === 'ImageGenerationButton') return true;
+        return Boolean(icons[action] && node.querySelector(icons[action]));
+    }
+    function findAction(scope, action, mustBeVisible = false) {
+        const candidates = scope?.querySelectorAll ? Array.from(scope.querySelectorAll(items)) : [];
+        if (scope?.matches?.(items)) candidates.unshift(scope);
+        return candidates.find(node => isAction(node, action) && (!mustBeVisible || visible(node))) || null;
+    }
+    function notify() {
+        if (frame !== null) return;
+        frame = requestAnimationFrame(() => {
+            frame = null;
+            for (const callback of listeners) {
+                try { callback(); } catch (error) { console.error('[SpicyChat Tools] Menu refresh failed.', error); }
+            }
+        });
+    }
+    function remember(event) {
+        if (!(event.target instanceof Element)) return;
+        for (const [kind, selector] of Object.entries(triggerSelectors)) {
+            const button = event.target.closest(selector);
+            if (!button) continue;
+            for (const key of Object.keys(active)) active[key] = null;
+            active[kind] = button;
+            notify();
+            break;
+        }
+    }
+    function start() {
+        if (observing) return;
+        observing = true;
+        document.addEventListener('pointerdown', remember, true);
+        document.addEventListener('click', remember, true);
+        const selector = `${items}, [role="menu"], textarea, ${Object.values(triggerSelectors).join(',')}`;
+        const touches = node => node?.nodeType === Node.ELEMENT_NODE && (node.matches(selector) || node.querySelector(selector));
+        new MutationObserver(records => {
+            if (records.some(record => (record.type === 'attributes' && record.target.matches(selector))
+                || Array.from(record.addedNodes).some(touches) || Array.from(record.removedNodes).some(touches))) notify();
+        }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-expanded', 'aria-label', 'data-state'] });
+    }
+    function menuContainer(item) {
+        const menu = item.closest('[role="menu"], [data-radix-menu-content]');
+        if (menu) return menu;
+        return item.parentElement;
+    }
+    function findMenu(kind, button) {
+        const actions = kind === 'message' ? ['copy', 'edit'] : kind === 'chat' ? ['saved', 'newChat'] : ['image', 'suggest', 'search', 'command'];
+        const fits = menu => menu && visible(menu) && actions.some(action => findAction(menu, action));
+        const controlled = button?.getAttribute('aria-controls');
+        if (controlled) {
+            const menu = document.getElementById(controlled);
+            if (fits(menu)) return menu;
+        }
+        const boundary = kind === 'message' ? button?.closest('[id^="message-"]') : null;
+        let host = button?.parentElement;
+        for (let depth = 0; host && depth < 4 && host !== document.body; depth++, host = host.parentElement) {
+            for (const child of host.children) if (!child.contains(button) && fits(child)) return child;
+            if (host === boundary) break;
+        }
+        if (active[kind] !== button) return null;
+        for (const item of document.querySelectorAll(items)) {
+            if (!visible(item) || !actions.some(action => isAction(item, action))) continue;
+            const menu = menuContainer(item);
+            if (fits(menu)) return menu;
+        }
+        return null;
+    }
+    function messageMenus() {
+        const result = [];
+        const seen = new Set();
+        for (const button of document.querySelectorAll(triggerSelectors.message)) {
+            const message = button.closest('[id^="message-"]');
+            if (!message) continue;
+            const menu = findMenu('message', button);
+            const template = findAction(menu, 'copy') || findAction(menu, 'edit');
+            if (!menu || !template || seen.has(menu)) continue;
+            seen.add(menu);
+            if (owners.has(menu) && owners.get(menu) !== message) {
+                for (const item of menu.querySelectorAll('.tm-sc-save-history-message, .tm-sc-add-message-bookmark')) item.remove();
+            }
+            owners.set(menu, message);
+            result.push({ message, menu, template, controls: button.parentElement });
+        }
+        return result;
+    }
+    function messageFor(node) {
+        const direct = node?.closest?.('[id^="message-"]');
+        if (direct) return direct;
+        for (let current = node; current; current = current.parentElement) {
+            const owner = owners.get(current);
+            if (owner?.isConnected) return owner;
+        }
+        return null;
+    }
+    return {
+        subscribe(callback) { start(); listeners.add(callback); },
+        findAction, messageMenus, messageFor,
+        plusMenu: button => findMenu('plus', button),
+        chatMenu: button => findMenu('chat', button),
+        composerAction(action) {
+            const textarea = document.querySelector('textarea[placeholder="Message..."]');
+            let scope = textarea?.parentElement;
+            while (scope && !scope.querySelector(triggerSelectors.plus)) scope = scope.parentElement;
+            return findAction(scope, action);
+        },
+        cloneMenuButton(template) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = Array.from(template.classList).filter(name => !name.startsWith('tm-sc-') && !name.startsWith('sc-quick-')).join(' ');
+            button.innerHTML = template.innerHTML;
+            if (!button.querySelector('p, span')) {
+                const icon = button.querySelector('svg')?.cloneNode(true);
+                const label = document.createElement('span');
+                label.textContent = template.textContent.trim();
+                button.replaceChildren(...(icon ? [icon] : []), label);
+            }
+            if (template.getAttribute('role') === 'menuitem') button.setAttribute('role', 'menuitem');
+            return button;
+        },
+    };
+}
+
+
 // ---- src/modules/per-chat.js ----
 
 // Feature source; bundled by scripts/build.mjs. No userscript metadata here.
@@ -817,7 +981,7 @@ function init_per_chat(runtime) {
     'use strict';
 
     // Previously @grant none: network overrides must still target the page.
-    const window = typeof unsafeWindow !== 'undefined' ? unsafeWindow : globalThis.window;
+    const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
 
     const INSTANCE_KEY = '__tmScPerChatResponseLengthV1';
     if (window[INSTANCE_KEY]) return;
@@ -1099,9 +1263,9 @@ function init_per_chat(runtime) {
 
     function installNetworkOverride() {
         try {
-            const originalFetch = window.fetch;
+            const originalFetch = pageWindow.fetch;
             if (typeof originalFetch === 'function') {
-                window.fetch = function (input, options) {
+                pageWindow.fetch = function (input, options) {
                     const method = options?.method || input?.method || 'GET';
                     const rawUrl = readRequestUrl(input);
                     if (!isGenerationRequest(rawUrl, method)) {
@@ -1136,7 +1300,7 @@ function init_per_chat(runtime) {
                                     return Reflect.apply(originalFetch, receiver, originalArguments);
                                 }
 
-                                const RequestConstructor = window.Request;
+                                const RequestConstructor = pageWindow.Request;
                                 if (typeof RequestConstructor !== 'function') {
                                     return Reflect.apply(originalFetch, receiver, originalArguments);
                                 }
@@ -1159,7 +1323,7 @@ function init_per_chat(runtime) {
         }
 
         try {
-            const prototype = window.XMLHttpRequest?.prototype;
+            const prototype = pageWindow.XMLHttpRequest?.prototype;
             if (!prototype) return;
             const originalOpen = prototype.open;
             const originalSend = prototype.send;
@@ -1528,6 +1692,8 @@ function init_per_chat(runtime) {
     }
 
     function findOpenPlusMenu(plusButton) {
+        const portal = runtime.dom?.plusMenu(plusButton);
+        if (portal) return portal;
         let host = plusButton?.parentElement || null;
         for (let depth = 0; host && depth < 4; depth += 1) {
             for (const child of host.children) {
@@ -1609,7 +1775,9 @@ function init_per_chat(runtime) {
         for (const plusButton of document.querySelectorAll(PLUS_BUTTON_SELECTOR)) {
             const menu = findOpenPlusMenu(plusButton);
             if (!menu) continue;
-            const referenceButton = menu.querySelector(NATIVE_MENU_ITEM_SELECTOR);
+            const referenceButton = menu.querySelector(NATIVE_MENU_ITEM_SELECTOR)
+                || runtime.dom?.findAction(menu, 'image') || runtime.dom?.findAction(menu, 'command')
+                || runtime.dom?.findAction(menu, 'suggest') || runtime.dom?.findAction(menu, 'search');
             if (!referenceButton) continue;
 
             const existingItem = menu.querySelector(`.${MENU_ITEM_CLASS}`);
@@ -2016,6 +2184,8 @@ function init_per_chat(runtime) {
     } else {
         startUi();
     }
+    runtime.dom?.subscribe(scheduleEnsureMenuItems);
+
 }
 
 
@@ -2754,6 +2924,9 @@ function init_quick_delete(runtime) {
     }
 
     function findRemoveMessagesMenuItem() {
+        const menu = runtime.dom?.chatMenu(findChatDropdownButton());
+        const action = runtime.dom?.findAction(menu, 'remove', true);
+        if (action) return action;
         return findVisibleButton(button => {
             const ariaLabel = normalizeButtonText(
                 button.getAttribute('aria-label')
@@ -5198,8 +5371,7 @@ function init_gallery(runtime) {
     }
 
     function cloneMenuButton(template) {
-        const button = template.cloneNode(true);
-        button.className = template.className;
+        const button = runtime.dom.cloneMenuButton(template);
         button.classList.remove(BOOKMARK_MENU_ITEM_CLASS, MENU_ITEM_CLASS);
         button.classList.add(MENU_ITEM_CLASS);
         button.removeAttribute('target');
@@ -5218,6 +5390,8 @@ function init_gallery(runtime) {
     }
 
     function findChatMenu(dropdown) {
+        const portal = runtime.dom?.chatMenu(dropdown);
+        if (portal) return portal;
         const wrapper = dropdown?.parentElement;
         if (wrapper) {
             const directSibling = dropdown.nextElementSibling;
@@ -5276,7 +5450,7 @@ function init_gallery(runtime) {
                 const template = (
                     menu.querySelector(`.${BOOKMARK_MENU_ITEM_CLASS}`)
                     || menu.querySelector('button[aria-label="View Saved Chats" i]')
-                    || menu.querySelector('button')
+                    || menu.querySelector('button, [role="menuitem"]')
                 );
                 if (!template) continue;
 
@@ -5877,6 +6051,8 @@ function init_gallery(runtime) {
         document.addEventListener('DOMContentLoaded', startDomFeatures, { once: true });
     }
     startDomFeatures();
+    runtime.dom?.subscribe(scheduleEnsure);
+
 }
 
 
@@ -7408,8 +7584,7 @@ function init_branches(runtime) {
     }
 
     function cloneMenuButton(template) {
-        const button = template.cloneNode(true);
-        button.className = template.className;
+        const button = runtime.dom.cloneMenuButton(template);
         button.classList.remove(
             'tm-sc-open-message-bookmarks',
             'tm-sc-open-conversation-gallery',
@@ -7431,6 +7606,8 @@ function init_branches(runtime) {
     }
 
     function findChatMenu(dropdown) {
+        const portal = runtime.dom?.chatMenu(dropdown);
+        if (portal) return portal;
         const wrapper = dropdown?.parentElement;
         if (wrapper) {
             const sibling = dropdown.nextElementSibling;
@@ -7480,7 +7657,7 @@ function init_branches(runtime) {
                 const template = menu.querySelector('.tm-sc-open-conversation-gallery')
                     || menu.querySelector('.tm-sc-open-message-bookmarks')
                     || menu.querySelector('button[aria-label="View Saved Chats" i]')
-                    || menu.querySelector('button');
+                    || menu.querySelector('button, [role="menuitem"]');
                 if (!template) continue;
                 button = cloneMenuButton(template);
                 button.addEventListener('click', (event) => {
@@ -8239,6 +8416,8 @@ function init_branches(runtime) {
         document.addEventListener('DOMContentLoaded', startDomFeatures, { once: true });
     }
     startDomFeatures();
+    runtime.dom?.subscribe(scheduleEnsure);
+
 }
 
 
@@ -9146,7 +9325,7 @@ function init_bookmarks(runtime) {
     }
 
     function getMessageRoot(node) {
-        const root = node?.closest?.(MESSAGE_SELECTOR);
+        const root = node?.closest?.(MESSAGE_SELECTOR) || runtime.dom?.messageFor(node);
         return root && root.id ? root : null;
     }
 
@@ -9211,8 +9390,7 @@ function init_bookmarks(runtime) {
     }
 
     function cloneMenuButton(template, className, ariaLabel, labelText, icon) {
-        const button = template.cloneNode(true);
-        button.className = template.className;
+        const button = runtime.dom.cloneMenuButton(template);
         button.classList.remove(
             'tm-sc-save-history-message',
             MESSAGE_MENU_ITEM_CLASS,
@@ -9232,6 +9410,7 @@ function init_bookmarks(runtime) {
         const labels = Array.from(button.querySelectorAll('p, span'));
         const primaryLabel = labels[0];
         if (primaryLabel) primaryLabel.textContent = labelText;
+        else { const span = document.createElement('span'); span.textContent = labelText; button.append(span); }
         for (const extra of labels.slice(1)) extra.remove();
 
         return button;
@@ -9243,10 +9422,8 @@ function init_bookmarks(runtime) {
     }
 
     function ensureMessageMenuItems() {
-        for (const saveItem of document.querySelectorAll(SAVED_TEXT_MENU_ITEM_SELECTOR)) {
-            const message = getMessageRoot(saveItem);
-            const menu = saveItem.parentElement;
-            if (!message || !menu) continue;
+        for (const { menu, template } of runtime.dom?.messageMenus() || []) {
+            const saveItem = menu.querySelector(SAVED_TEXT_MENU_ITEM_SELECTOR) || template;
 
             let button = menu.querySelector(`.${MESSAGE_MENU_ITEM_CLASS}`);
             if (!button) {
@@ -9275,6 +9452,8 @@ function init_bookmarks(runtime) {
     }
 
     function findChatMenu(dropdown) {
+        const portal = runtime.dom?.chatMenu(dropdown);
+        if (portal) return portal;
         const wrapper = dropdown?.parentElement;
         if (wrapper) {
             const directSibling = dropdown.nextElementSibling;
@@ -9337,7 +9516,7 @@ function init_bookmarks(runtime) {
             let button = menu.querySelector(`.${CHAT_MENU_ITEM_CLASS}`);
             if (!button) {
                 const template = menu.querySelector('button[aria-label="View Saved Chats" i]')
-                    || menu.querySelector('button');
+                    || menu.querySelector('button, [role="menuitem"]');
                 if (!template) continue;
 
                 button = cloneMenuButton(
@@ -10655,6 +10834,8 @@ function init_bookmarks(runtime) {
         document.addEventListener('DOMContentLoaded', startDomFeatures, { once: true });
     }
     startDomFeatures();
+    runtime.dom?.subscribe(scheduleEnsure);
+
 }
 
 
@@ -13932,11 +14113,13 @@ function init_buttons(runtime) {
         if (relevant) scheduleEnsureActionButtons();
     }
 
-    function waitForVisibleElement(selector, timeout = 1600) {
+    function waitForVisibleElement(selector, timeout = 1600, action = null) {
         const startedAt = Date.now();
         return new Promise((resolve) => {
             const check = () => {
-                const element = findVisibleElement(selector);
+                const plus = findVisibleElement(PLUS_BUTTON_SELECTOR);
+                const element = findVisibleElement(selector)
+                    || (action && runtime.dom?.findAction(runtime.dom.plusMenu(plus), action, true));
                 if (element) {
                     resolve(element);
                     return;
@@ -13966,13 +14149,15 @@ function init_buttons(runtime) {
         if (button) button.classList.add('is-busy');
 
         try {
-            const nativeButton = findNativeButtonInComposer(nativeSelector);
+            const action = actionName === 'Suggest Reply' ? 'suggest' : 'image';
+            const nativeButton = findNativeButtonInComposer(nativeSelector) || runtime.dom?.composerAction(action);
             if (nativeButton) {
                 if (!nativeButton.disabled) nativeButton.click();
                 return;
             }
 
-            let menuItem = findVisibleElement(menuSelector);
+            const plus = findVisibleElement(PLUS_BUTTON_SELECTOR);
+            let menuItem = findVisibleElement(menuSelector) || runtime.dom?.findAction(runtime.dom.plusMenu(plus), action, true);
             if (!menuItem) {
                 const plusButton = findVisibleElement(PLUS_BUTTON_SELECTOR);
                 if (!plusButton) {
@@ -13982,7 +14167,7 @@ function init_buttons(runtime) {
                 }
 
                 plusButton.click();
-                menuItem = await waitForVisibleElement(menuSelector);
+                menuItem = await waitForVisibleElement(menuSelector, 1600, action);
             }
 
             if (menuItem && !menuItem.disabled) menuItem.click();
@@ -14066,6 +14251,8 @@ function init_buttons(runtime) {
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) ensureDomFeatures();
     });
+    runtime.dom?.subscribe(scheduleEnsureActionButtons);
+
 }
 
 
@@ -14086,7 +14273,6 @@ function init_saved_texts(runtime) {
     const STYLE_ID = 'tm-sc-saved-texts-style';
     const STORAGE_PREFIX = 'tm-sc-saved-texts-v1:bot:';
     const DELETE_CONFIRM_MS = 2600;
-    const MESSAGE_MENU_COPY_SELECTOR = 'button[aria-label="Copy" i]';
     const MESSAGE_DROPDOWN_SELECTOR = 'button[aria-label="message-dropdown" i]';
     const MESSAGE_TEXT_CLASS_TOKEN = '[overflow-wrap:anywhere]';
     const MESSAGE_SAVE_ITEM_CLASS = 'tm-sc-save-history-message';
@@ -14625,30 +14811,10 @@ function init_saved_texts(runtime) {
         toolbarFlashTimers.set(button, timer);
     }
 
-    function findMessageMenuContext(copyButton) {
-        const controls = copyButton.closest('.sc-quick-delete-controls');
-        if (!controls) return null;
-
-        let menu = copyButton.parentElement;
-        while (menu && menu.parentElement !== controls) menu = menu.parentElement;
-        if (!menu || menu.parentElement !== controls) return null;
-
-        return { controls, menu };
-    }
-
     function findMessageTextContainer(controls) {
-        let ancestor = controls.parentElement;
-
-        for (let depth = 0; ancestor && depth < 8; depth += 1, ancestor = ancestor.parentElement) {
-            if (ancestor.classList?.contains(MESSAGE_TEXT_CLASS_TOKEN)) return ancestor;
-
-            const candidate = Array.from(ancestor.querySelectorAll('[class]')).find((element) => (
-                element.classList.contains(MESSAGE_TEXT_CLASS_TOKEN)
-            ));
-            if (candidate) return candidate;
-        }
-
-        return null;
+        const message = controls.closest('[id^="message-"]');
+        return message && Array.from(message.querySelectorAll('[class]')).find(element =>
+            element.classList.contains(MESSAGE_TEXT_CLASS_TOKEN)) || null;
     }
 
     function serializeFormattedNode(node) {
@@ -14749,6 +14915,7 @@ function init_saved_texts(runtime) {
 
         const label = button.querySelector('p') || button.querySelector('span');
         if (label) label.textContent = stateData.label;
+        else { const span = document.createElement('span'); span.textContent = stateData.label; button.append(span); }
     }
 
     async function storeSavedText(botId, text) {
@@ -14808,23 +14975,20 @@ function init_saved_texts(runtime) {
     }
 
     function ensureMessageSaveMenuItems() {
-        for (const copyButton of document.querySelectorAll(MESSAGE_MENU_COPY_SELECTOR)) {
-            const context = findMessageMenuContext(copyButton);
-            if (!context || context.menu.querySelector(`.${MESSAGE_SAVE_ITEM_CLASS}`)) continue;
-
-            const template = context.menu.querySelector('button[aria-label="Edit" i]') || copyButton;
-            const button = template.cloneNode(true);
+        for (const context of runtime.dom?.messageMenus() || []) {
+            if (context.menu.querySelector(`.${MESSAGE_SAVE_ITEM_CLASS}`)) continue;
+            const template = runtime.dom.findAction(context.menu, 'edit') || context.template;
+            const button = runtime.dom.cloneMenuButton(template);
             button.classList.add(MESSAGE_SAVE_ITEM_CLASS);
-            button.removeAttribute('target');
-            button.disabled = false;
             setMessageMenuButtonState(button, 'idle');
             button.addEventListener('click', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation();
-                void saveHistoryMessage(button, context.controls);
+                const message = runtime.dom.messageFor(button);
+                const controls = message?.querySelector(MESSAGE_DROPDOWN_SELECTOR)?.parentElement;
+                if (controls) void saveHistoryMessage(button, controls);
             });
-
             context.menu.appendChild(button);
         }
     }
@@ -14944,7 +15108,7 @@ function init_saved_texts(runtime) {
         if (!node || node.nodeType !== Node.ELEMENT_NODE) return false;
         const selector = [
             TEXTAREA_SELECTOR,
-            MESSAGE_MENU_COPY_SELECTOR,
+            'button[aria-label="Copy" i], [role="menu"]',
             `#${TOOLBAR_ID}`,
             EMOJI_WRAP_SELECTOR,
         ].join(', ');
@@ -15383,6 +15547,8 @@ function init_saved_texts(runtime) {
     document.addEventListener('visibilitychange', () => {
         if (!document.hidden) ensureDomFeatures();
     });
+    runtime.dom?.subscribe(scheduleEnsureToolbar);
+
 }
 
 
@@ -15494,20 +15660,23 @@ const gm = {
 const store = createStore(MODULE_CATALOG, gm);
 const controls = createInterface({ store, catalog: MODULE_CATALOG, storage: localStorage, version: SUITE_VERSION });
 GM_registerMenuCommand('SpicyChat Tools — настройки и перенос', controls.open);
-const runtime = { getEndpoint: id => store.getEndpoint(id) };
+const runtime = { getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters() };
+const started = new Set();
 
 function startFeature(module) {
     const mainSite = location.hostname === 'spicychat.ai' || location.hostname === 'www.spicychat.ai';
     if (!mainSite && !module.matchesSubdomains) return;
     if (!store.settings.active || !store.settings.modules[module.id]) return;
-    try { FEATURE_INITIALIZERS[module.id](runtime); }
+    if (started.has(module.id)) return;
+    try { FEATURE_INITIALIZERS[module.id](runtime); started.add(module.id); }
     catch (error) { console.error(`[SpicyChat Tools] Не удалось запустить модуль ${module.id}.`, error); }
 }
 
 // Early interceptors run synchronously, before the site's first API requests.
 for (const module of MODULE_CATALOG) if (module.phase === 'start') startFeature(module);
 function startDomFeatures() {
-    controls.start();
+    try { controls.start(); }
+    catch (error) { console.error('[SpicyChat Tools] Не удалось открыть настройки. Остальные функции продолжают запуск.', error); }
     for (const module of MODULE_CATALOG) if (module.phase === 'dom') startFeature(module);
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startDomFeatures, { once: true });
