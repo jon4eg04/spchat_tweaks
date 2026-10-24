@@ -366,51 +366,60 @@ await manage.getByText('Alpha text', { exact: true }).waitFor();
 assert.equal(await manage.locator('.tm-sc-message-bookmark-marker').count(), 0);
 await manage.keyboard.press('Escape');
 scenarios.push('spa-route-keeps-bot-library-and-isolates-conversation-state');
-// Native model menus: supplied structural markup with invented descriptions/data.
+// Real React rows reproduce the supplied wd -> X -> div callback contract.
 const modelPage = await fixture();
+for (const [packageName, file] of [['react', 'react.production.min.js'], ['react-dom', 'react-dom.production.min.js']]) {
+    const base = new URL('../node_modules/' + packageName + '/umd/', import.meta.url);
+    await modelPage.addScriptTag({ content: await readFile(new URL(file, base), 'utf8') });
+}
 await modelPage.evaluate(() => {
     localStorage.setItem('tm-sc-per-chat-inference-model-v1', JSON.stringify({ 'old-conversation': 'glm45' }));
-    window.__selectedNative = 'qwenplus-character'; window.__nativeModelClicks = 0;
-    window.__delayedChooser = false;
-    window.__openQuickModels = (nativeMimo = false) => {
-        document.querySelector('#native-model-menu')?.remove();
-        const panel = document.createElement('div'); panel.id = 'native-model-menu'; panel.dataset.testid = 'Dropdown-Panel';
-        panel.style.cssText = 'position:fixed;right:20px;top:20px;background:white;z-index:100;max-width:330px';
-        const list = document.createElement('div'); list.style.cssText = 'display:flex;flex-direction:column'; panel.append(list);
-        const head = document.createElement('div'); head.innerHTML = '<p>Available models</p>'; list.append(head);
+    localStorage.setItem('fixture-native-model', 'qwenplus-character');
+    window.__selectedNative = 'qwenplus-character'; window.__nativeModelClicks = 0; window.__exploreClicks = 0;
+    const h = React.createElement;
+    const Flex = ({ onClick, children, ...props }) => h('div', { ...props, onClick }, children);
+    function NativeModelRow({ model, activeModel, clickHandler }) {
+        const onClick = () => !model.isDisabled && clickHandler({ id: model.id, name: model.name });
+        return h(Flex, { onClick, className: 'cursor-pointer px-[18px] py-[10px]', 'data-native-model': model.id },
+            h('div', null, h('div', null, h('p', null, model.name), h('div', null, h('p', null, 'Fixture badge'))), h('p', { className: 'text-gray-10 line-clamp-2' }, 'Invented description')),
+            activeModel === model.id && h('svg', { className: 'lucide-check', width: '20', height: '20' }, h('path', { d: 'M20 6 9 17l-5-5' })));
+    }
+    function ModelApp() {
+        const [activeModel, setActiveModel] = React.useState(() => localStorage.getItem('fixture-native-model'));
+        const [open, setOpen] = React.useState(false);
+        const [nativeMimo, setNativeMimo] = React.useState(false);
+        const [toast, setToast] = React.useState('');
+        window.__openQuickModels = (native = false) => { setNativeMimo(native); setOpen(true); };
+        window.__setActiveModel = id => { setActiveModel(id); window.__selectedNative = id; };
+        const select = React.useCallback(({ id, name }) => {
+            setActiveModel(id); window.__selectedNative = id; window.__nativeModelClicks++;
+            localStorage.setItem('fixture-native-model', id); setToast(name); setOpen(false);
+        }, []);
         const choices = [
-            ['Qwen Plus Character', 'qwenplus-character'], ['Glam 5.1', 'glm51'],
-            ['Deepseek V4 Pro', 'deepseek-v4pro'], ['Qwen3 235B 2507', 'unwanted'], ['Codex 24B', 'unwanted-codex'],
-            ...(nativeMimo ? [['MiMo V2.6 Pro', 'mimo-v26-pro']] : []),
+            { name: 'Qwen Plus Character', id: 'qwenplus-character' }, { name: 'Glam 5.1', id: 'glm51' },
+            { name: 'Deepseek V4 Pro', id: 'deepseek-v4pro' }, { name: 'Qwen3 235B 2507', id: 'unwanted' }, { name: 'Codex 24B', id: 'unwanted-codex' },
+            ...(nativeMimo ? [{ name: 'MiMo V2.6 Pro', id: 'mimo-v26-pro' }] : []),
         ];
-        for (const [label, id] of choices) {
-            const row = document.createElement('div'); row.className = 'cursor-pointer px-[18px] py-[10px]';
-            row.dataset.nativeModel = id;
-            row.innerHTML = `<div class="flex"><div><p>${label}</p><div><p>Fixture badge</p></div></div><p class="text-gray-10 line-clamp-2">Invented description</p></div><svg class="lucide-check"></svg>`;
-            row.onclick = () => { window.__selectedNative = id; window.__nativeModelClicks++; panel.remove(); };
-            list.append(row);
-        }
-        const divider = document.createElement('div'); list.append(divider);
-        const explore = document.createElement('div'); explore.className = 'cursor-pointer px-[18px] py-[10px]';
-        explore.innerHTML = '<div><p>Explore all models</p><p>Find your ideal model</p></div>';
-        explore.onclick = () => {
-            panel.remove();
-            const chooser = document.createElement('div'); chooser.id = 'native-full-models'; chooser.style.cssText = 'position:fixed;top:20px;right:20px;z-index:100;background:white';
-            const row = document.createElement('div'); row.className = 'cursor-pointer py-md';
-            row.innerHTML = '<div data-testid="ChatOpenaiModelSelectModelCapabilityGate"><div><p>MiMo V2.6 Pro</p></div><p>Invented full description</p></div>';
-            row.onclick = () => { window.__selectedNative = 'mimo-v26-pro'; window.__nativeModelClicks++; chooser.remove(); };
-            chooser.append(row);
-            window.__showModelChooser = () => document.body.append(chooser);
-            if (!window.__delayedChooser) setTimeout(__showModelChooser, 40);
-        };
-        list.append(explore);
-        const settings = document.createElement('div'); settings.className = explore.className; settings.innerHTML = '<p>Generation Settings</p>'; list.append(settings);
-        document.body.append(panel);
-    };
-    __openQuickModels();
+        return h(React.Fragment, null,
+            h('div', { id: 'native-model-toast' }, toast),
+            open && h('div', { id: 'native-model-menu', 'data-testid': 'Dropdown-Panel', style: { position: 'fixed', right: '20px', top: '20px', background: 'white', zIndex: 100, maxWidth: '330px' } },
+                h('div', { style: { display: 'flex', flexDirection: 'column' } },
+                    h('div', null, h('p', null, 'Available models')),
+                    ...choices.map(model => h(NativeModelRow, { key: model.id, model, activeModel, clickHandler: select })),
+                    h('div'),
+                    h(Flex, { className: 'cursor-pointer px-[18px] py-[10px]', onClick: () => {
+                        window.__exploreClicks++; const full = document.createElement('div'); full.id = 'native-full-models'; document.body.append(full); setOpen(false);
+                    } }, h('p', null, 'Explore all models'), h('p', null, 'Find your ideal model')),
+                    h(Flex, { className: 'cursor-pointer px-[18px] py-[10px]' }, h('p', null, 'Generation Settings')))));
+    }
+    const root = document.createElement('section'); document.body.append(root);
+    ReactDOM.createRoot(root).render(h(ModelApp));
 });
+await modelPage.waitForFunction(() => typeof __openQuickModels === 'function');
+await modelPage.evaluate(() => __openQuickModels());
 const quickModelNames = ['Deepseek V4 Pro', 'Qwen Plus Character', 'Glam 5.1', 'MiMo V2.6 Pro'];
-await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').waitFor();
+const mimoShortcut = modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]');
+await mimoShortcut.waitFor();
 const readQuickModels = () => modelPage.evaluate(() => [...document.querySelectorAll('#native-model-menu .cursor-pointer')]
     .filter(row => getComputedStyle(row).display !== 'none' && !['Explore all models', 'Generation Settings'].includes(row.querySelector('p')?.textContent))
     .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
@@ -418,41 +427,41 @@ const readQuickModels = () => modelPage.evaluate(() => [...document.querySelecto
 assert.deepEqual(await readQuickModels(), quickModelNames);
 assert.equal(await modelPage.locator('[data-native-model=unwanted]').isVisible(), false);
 assert.equal(await modelPage.locator('[data-native-model=unwanted-codex]').isVisible(), false);
-assert.equal(await modelPage.locator('[data-sc-quick-model] .lucide-check').count(), 0, 'do not copy the currently selected native model check');
-await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').click();
+assert.equal(await mimoShortcut.getAttribute('aria-disabled'), 'false');
+assert.equal(await mimoShortcut.locator('.lucide-check').count(), 0, 'never copy another model selection check');
+await mimoShortcut.click();
 await modelPage.waitForFunction(() => __selectedNative === 'mimo-v26-pro' && __nativeModelClicks === 1);
-assert.equal(await modelPage.locator('#native-full-models, #native-model-menu').count(), 0, 'site handlers dismiss both menus');
+await modelPage.locator('#native-model-menu').waitFor({ state: 'detached' });
+assert.equal(await modelPage.locator('#native-model-toast').textContent(), 'MiMo V2.6 Pro');
+assert.equal(await modelPage.evaluate(() => localStorage.getItem('fixture-native-model')), 'mimo-v26-pro');
+assert.equal(await modelPage.evaluate(() => __exploreClicks), 0, 'MiMo must never open Explore all models');
+assert.equal(await modelPage.locator('#native-full-models').count(), 0);
 await modelPage.evaluate(() => __openQuickModels());
-await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').waitFor();
+await mimoShortcut.locator('[data-sc-model-check]').waitFor();
+assert.equal(await modelPage.locator('#native-model-menu .lucide-check').count(), 1);
+await modelPage.evaluate(() => __setActiveModel('glm51'));
+await mimoShortcut.locator('[data-sc-model-check]').waitFor({ state: 'detached' });
+await modelPage.evaluate(() => __setActiveModel('mimo-v26-pro'));
+await mimoShortcut.locator('[data-sc-model-check]').waitFor();
 await modelPage.evaluate(() => document.body.append(document.createElement('div')));
 await modelPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-assert.equal(await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').count(), 1);
+assert.equal(await mimoShortcut.count(), 1);
+assert.equal(await mimoShortcut.locator('[data-sc-model-check]').count(), 1);
 await modelPage.locator('[data-native-model=deepseek-v4pro]').click();
-assert.equal(await modelPage.evaluate(() => __selectedNative), 'deepseek-v4pro', 'native choices retain their original handler');
+assert.equal(await modelPage.evaluate(() => __selectedNative), 'deepseek-v4pro', 'native choices retain their handler');
+await modelPage.evaluate(() => __openQuickModels());
+await mimoShortcut.waitFor();
+assert.equal(await mimoShortcut.locator('[data-sc-model-check]').count(), 0);
+await mimoShortcut.press('Enter');
+await modelPage.waitForFunction(() => __selectedNative === 'mimo-v26-pro' && !document.querySelector('#native-model-menu'));
 await modelPage.evaluate(() => __openQuickModels(true));
-await modelPage.waitForFunction(() => getComputedStyle(document.querySelector('[data-native-model=unwanted]')).display === 'none');
-assert.equal(await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').count(), 0, 'a native MiMo row replaces the shortcut without a duplicate');
+await modelPage.waitForFunction(() => { const row = document.querySelector('[data-native-model=unwanted]'); return row && getComputedStyle(row).display === 'none'; });
+assert.equal(await mimoShortcut.count(), 0, 'site-provided MiMo replaces our row without duplication');
 assert.deepEqual(await readQuickModels(), quickModelNames);
+assert.equal(await modelPage.locator('[data-native-model="mimo-v26-pro"] .lucide-check').count(), 1);
 await modelPage.locator('[data-native-model="mimo-v26-pro"]').click();
-await modelPage.evaluate(() => { __delayedChooser = true; __selectedNative = 'glm51'; __openQuickModels(); });
-await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').press('Enter');
-await modelPage.keyboard.press('Escape');
-await modelPage.evaluate(() => __showModelChooser());
-await modelPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-assert.equal(await modelPage.evaluate(() => __selectedNative), 'glm51', 'Escape cancels pending automatic selection');
-await modelPage.evaluate(() => { document.querySelector('#native-full-models').remove(); __openQuickModels(); });
-await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').click();
-await modelPage.locator('#thread').click({ position: { x: 2, y: 2 } });
-await modelPage.evaluate(() => __showModelChooser());
-await modelPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-assert.equal(await modelPage.evaluate(() => __selectedNative), 'glm51', 'outside pointer interaction cancels pending automatic selection');
-await modelPage.evaluate(() => { document.querySelector('#native-full-models').remove(); __openQuickModels(); });
-await modelPage.locator('[data-sc-quick-model="mimo-v26-pro"]').click();
-await modelPage.evaluate(() => { history.pushState(null, '', location.pathname + '-different'); __showModelChooser(); });
-await modelPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-assert.equal(await modelPage.evaluate(() => __selectedNative), 'glm51', 'navigation cancels selection intended for the previous chat');
-await modelPage.evaluate(({ bot, chat }) => { document.querySelector('#native-full-models').remove(); history.replaceState(null, '', `/chat/${bot}/${chat}`); }, { bot, chat });
-scenarios.push('four-ordered-native-models', 'native-mimo-click-through', 'native-model-handlers-retained', 'model-menu-reopen-and-native-deduplication', 'pending-model-selection-cancelled-by-escape', 'pending-selection-cancelled-by-pointer-and-route');
+assert.equal(await modelPage.evaluate(() => __exploreClicks), 0);
+scenarios.push('four-ordered-native-models', 'react-native-mimo-selection-without-full-chooser', 'native-model-persistence-toast-and-dismissal', 'selected-check-on-reopen-and-react-alternate-update', 'native-model-handlers-retained', 'model-menu-reopen-and-native-deduplication', 'mimo-keyboard-selection');
 await modelPage.locator('[aria-label=Plus-button]').click();
 await modelPage.locator('.tm-sc-response-length-menu-item').click();
 assert.deepEqual(await modelPage.locator('.tm-sc-response-model-select option').allTextContents(), ['Как выбрано на сайте', ...quickModelNames]);

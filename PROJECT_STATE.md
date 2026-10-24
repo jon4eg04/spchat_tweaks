@@ -6,7 +6,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Current implementation
 
-- Version 1.0.6. Public source and installation files in this repository.
+- Version 1.0.7. Public source and installation files in this repository.
 - User requested no personal-name attribution anywhere in published files. The author header is omitted, AGENTS.md forbids future personal-name attribution, and public-file checks reject author headers.
 - Added hide-models, based on the user's Hide selected model blocks v1.1: hides Qwen3 235B 2507 and Codex 24B, handles dynamically inserted paragraphs and text changes, and restores a hidden row if the site reuses it for another model. Independently toggled and enabled by default on upgrade.
 - The additional legacy hider is optional in ZIP migration. Original eleven-script backups are still complete; no repeated import is needed for already-migrated users.
@@ -42,7 +42,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Next steps
 
-The user updates the combined script to 1.0.6 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Verify native MiMo selection in the real account; local/browser CI uses synthetic site handlers.
+The user updates the combined script to 1.0.7 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Verify native MiMo selection in the real account; local/browser CI uses synthetic site handlers.
 
 ## Full original-source audit (1.0.5)
 
@@ -63,3 +63,12 @@ The user updates the combined script to 1.0.6 and reloads SpicyChat. No repeated
 - Supplied HTML shows early styles but no SC Tools/DOM-phase controls/hiding markers; it cannot establish the live cause. Shared onDomReady now has a timer fallback in addition to DOMContentLoaded/readystatechange/load/pageshow. Per-chat UI uses it too; early interceptors remain synchronous.
 - Lifecycle tests cover absent ready events. The document-start browser fixture verifies startup and Qwen3 hiding with all ready listeners suppressed. Feature checks cover native MiMo handler delegation, exact list/order, hidden rows, reopen/deduplication, Escape cancellation, per-chat MiMo requests and legacy storage preservation in Chromium/Firefox.
 - Private source HTML is not committed. No signed-in backend selection was exercised; the user should verify the native menu on the live site after updating.
+
+## Direct native model selection correction (1.0.7)
+
+- User reported that 1.0.6 opened the full chooser instead of behaving like a native quick choice. Its automatic full-chooser path is removed completely, including waiting/timers and pending-selection cancellation code.
+- The user supplied the actual React row/component contract: wd receives model, activeModel, clickHandler; its X child forwards onClick to the host div. The shared handler receives {id, name}, updates the inference store, persists the native key, displays a toast and closes the dropdown. We invoke this actual callback instead of guessing the native persistence key or store API.
+- src/core/native-models.js resolves the observed contract on a known native row. It ignores minified component names, rejects locked/disabled/action/mismatched rows, and matches the committed host onClick against the owner's child, including React alternates after rerenders. Callback lookup is repeated at click time. Missing contract disables only the added shortcut with a tooltip; there is no full-chooser fallback or fake selected state.
+- Selected check uses the current native activeModel on every menu update/reopen. Firefox DOM Xrays are unwrapped for expando access and the id/name payload is allocated with unsafeWindow.Object so the page does not need to access privileged userscript objects. No suite settings or credentials are exposed.
+- Node tests cover callback shape, page-realm payload, stale alternate state, Firefox wrapper access and rejection cases. Browser model tests now use genuine React 18.3.1 rather than invented DOM click-through behavior: direct selection, native persistence/toast/closing, no Explore invocation, single selected check on reopening and rerender, keyboard activation, native handler preservation and deduplication. CI installs React only for browser tests; the userscript still has no runtime dependency or external require.
+- Full Chromium/Firefox checks remain mandatory. Real account execution is not available in this environment; the adapter contract is taken directly from the user's runtime diagnostics.
