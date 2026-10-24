@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SpicyChat Tools
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
-// @version      1.0.5
+// @version      1.0.6
 // @description  Единый комплект из 12 функций SpicyChat с локальными настройками и переносом старых данных.
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
@@ -26,7 +26,7 @@
 (function () {
 'use strict';
 
-const SUITE_VERSION = "1.0.5";
+const SUITE_VERSION = "1.0.6";
 
 const MODULE_CATALOG = [
   {
@@ -999,6 +999,44 @@ function createDomAdapters() {
     };
 }
 
+// Userscript injection can miss DOMContentLoaded. Keep the idle-phase features
+// independent of that single event without delaying the early API interceptors.
+function onDomReady(callback) {
+    let finished = false;
+    let timer = null;
+    const check = () => {
+        if (finished) return;
+        if (timer !== null) window.clearTimeout(timer);
+        if (!document.body || document.readyState === 'loading') {
+            timer = window.setTimeout(check, 100);
+            return;
+        }
+        finished = true;
+        timer = null;
+        document.removeEventListener('DOMContentLoaded', check);
+        document.removeEventListener('readystatechange', check);
+        window.removeEventListener('load', check);
+        window.removeEventListener('pageshow', check);
+        callback();
+    };
+    document.addEventListener('DOMContentLoaded', check);
+    document.addEventListener('readystatechange', check);
+    window.addEventListener('load', check);
+    window.addEventListener('pageshow', check);
+    check();
+}
+
+
+// ---- src/core/models.js ----
+
+// The same ordered choices feed the native quick menu and per-chat overrides.
+const QUICK_MODELS = Object.freeze([
+    { id: 'deepseek-v4pro', label: 'Deepseek V4 Pro' },
+    { id: 'qwenplus-character', label: 'Qwen Plus Character' },
+    { id: 'glm51', label: 'Glam 5.1' },
+    { id: 'mimo-v26-pro', label: 'MiMo V2.6 Pro', description: 'A flagship model with a natural, lively writing voice. MiMo V2.6 Pro writes dialogue that sounds like real people talking, handles banter and comedy with sharp timing, and keeps characters true to their personality. It moves the story forward on its own, avoids repetitive phrasing, and weaves in lore and world details well. Best for character-driven roleplay, adventure and fantasy stories, and multi-character scenes.' },
+]);
+
 
 // ---- src/modules/per-chat.js ----
 
@@ -1034,13 +1072,10 @@ function init_per_chat(runtime) {
     const INITIAL_TOKENS = 300;
     const INFERENCE_MODELS = [
         { id: '', label: 'Как выбрано на сайте' },
-        { id: 'qwenplus-character', label: 'Qwen Plus Character' },
-        { id: 'deepseek-v4pro', label: 'Deepseek V4 Pro' },
-        { id: 'glm51', label: 'Glam 5.1' },
-        { id: 'glm45', label: 'Glam 4.6' },
+        ...runtime.models,
     ];
     const INFERENCE_MODEL_IDS = new Set(
-        INFERENCE_MODELS.map(({ id }) => id).filter(Boolean),
+        [...INFERENCE_MODELS.map(({ id }) => id).filter(Boolean), 'glm45'], // Retain earlier saved overrides.
     );
     const XHR_META = Symbol('tmScResponseLengthRequest');
 
@@ -1152,6 +1187,7 @@ function init_per_chat(runtime) {
     }
 
     function getModelLabel(modelId) {
+        if (modelId === 'glm45') return 'Glam 4.6 (сохранено ранее)';
         return INFERENCE_MODELS.find(({ id }) => id === modelId)?.label
             || INFERENCE_MODELS[0].label;
     }
@@ -2015,6 +2051,14 @@ function init_per_chat(runtime) {
 
         panel.dataset.conversationId = context?.conversationId || '';
         slider.value = String(savedLimit ?? INITIAL_TOKENS);
+        modelSelect.querySelector('[data-legacy-model]')?.remove();
+        if (savedModel === 'glm45') {
+            const legacy = document.createElement('option');
+            legacy.value = savedModel;
+            legacy.textContent = getModelLabel(savedModel);
+            legacy.dataset.legacyModel = 'true';
+            modelSelect.append(legacy);
+        }
         modelSelect.value = savedModel;
         save.disabled = !context?.conversationId;
         error.hidden = Boolean(context?.conversationId);
@@ -2195,11 +2239,7 @@ function init_per_chat(runtime) {
     }
 
     installNetworkOverride();
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', startUi, { once: true });
-    } else {
-        startUi();
-    }
+    runtime.onDomReady(startUi);
     runtime.dom?.subscribe(scheduleEnsureMenuItems);
 
 }
@@ -15463,6 +15503,118 @@ function init_hide_models(runtime) {
     const hiddenRows = new Map();
     const pendingRoots = new Set();
     let scheduled = false;
+    const models = runtime.models;
+    const shortcutAttribute = 'data-sc-quick-model';
+    let pendingSelection = null;
+
+    function title(row) { return row?.querySelector('p')?.textContent.trim() || ''; }
+    function quickRows(panel) {
+        return [...panel.querySelectorAll('div.cursor-pointer')].filter(row =>
+            row.classList.contains('px-[18px]') && row.classList.contains('py-[10px]'));
+    }
+    function nativeModelCard(label) {
+        for (const gate of document.querySelectorAll('[data-testid="ChatOpenaiModelSelectModelCapabilityGate"]')) {
+            if (title(gate) !== label) continue;
+            const row = gate.closest('div.cursor-pointer');
+            if (row && row.getClientRects().length && getComputedStyle(row).visibility !== 'hidden') return row;
+        }
+        return null;
+    }
+
+    function finishSelection() {
+        if (!pendingSelection) return;
+        if (location.pathname !== pendingSelection.path) {
+            clearTimeout(pendingSelection.timer); pendingSelection = null; return;
+        }
+        const row = nativeModelCard(pendingSelection.label);
+        if (!row) return;
+        clearTimeout(pendingSelection.timer);
+        pendingSelection = null;
+        // Use the site's actual handler, including its subscription/capability checks.
+        row.click();
+    }
+
+    function chooseModel(model, explore) {
+        if (pendingSelection) return;
+        const existing = nativeModelCard(model.label);
+        if (existing) { existing.click(); return; }
+        pendingSelection = {
+            label: model.label, path: location.pathname,
+            // Leave the native chooser usable if its structure/network changes.
+            timer: setTimeout(() => { pendingSelection = null; }, 5000),
+        };
+        explore.click();
+        finishSelection();
+    }
+
+    // A user dismissing the chooser must cancel an outstanding automatic selection.
+    document.addEventListener('pointerdown', () => {
+        if (pendingSelection) { clearTimeout(pendingSelection.timer); pendingSelection = null; }
+    }, true);
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && pendingSelection) {
+            clearTimeout(pendingSelection.timer); pendingSelection = null;
+        }
+    }, true);
+
+    function updateQuickMenus() {
+        for (const panel of document.querySelectorAll('[data-testid="Dropdown-Panel"]')) {
+            const rows = quickRows(panel);
+            const explore = rows.find(row => title(row) === 'Explore all models');
+            if (!explore) continue; // Never rewrite unrelated dropdowns or the full chooser.
+            const list = explore.parentElement;
+            const nativeRows = rows.filter(row => row.parentElement === list && !row.hasAttribute(shortcutAttribute));
+            const firstControl = [...list.children].find(row => title(row) === 'Available models');
+            if (firstControl && firstControl.style.order !== '-10') firstControl.style.order = '-10';
+            for (const row of nativeRows) {
+                const label = title(row);
+                if (row === explore || label === 'Generation Settings') continue;
+                const index = models.findIndex(model => model.label === label);
+                row.toggleAttribute('data-sc-excluded-model', index < 0);
+                if (index < 0) hideRow(row);
+                else if (row.style.order !== String(index - 9)) row.style.order = String(index - 9);
+            }
+            for (const [index, model] of models.entries()) {
+                const native = nativeRows.find(row => title(row) === model.label);
+                let shortcut = list.querySelector(`[${shortcutAttribute}="${model.id}"]`);
+                if (native) { shortcut?.remove(); continue; }
+                if (shortcut) continue;
+                const template = nativeRows.find(row => models.some(item => item.label === title(row)));
+                if (!template) continue;
+                shortcut = template.cloneNode(true);
+                shortcut.removeAttribute('id');
+                shortcut.removeAttribute('data-sc-excluded-model');
+                shortcut.removeAttribute('data-hidden-by-tampermonkey');
+                shortcut.style.removeProperty('display');
+                shortcut.style.order = String(index - 9);
+                shortcut.setAttribute(shortcutAttribute, model.id);
+                shortcut.setAttribute('role', 'menuitem');
+                shortcut.tabIndex = 0;
+                const heading = shortcut.querySelector('p');
+                heading.textContent = model.label;
+                const description = shortcut.querySelector('p.text-gray-10');
+                if (description && model.description) description.textContent = model.description;
+                // Keep native typography without copying another model's badges/check.
+                for (const paragraph of [...shortcut.querySelectorAll('p')]) {
+                    if (paragraph === heading || (paragraph === description && model.description)) continue;
+                    paragraph.remove();
+                }
+                shortcut.querySelectorAll('svg, [id]').forEach(node => node.remove());
+                // Badges have wrappers that would otherwise leave empty bordered boxes.
+                for (const node of [...shortcut.querySelectorAll('div')].reverse()) if (!node.textContent.trim()) node.remove();
+                shortcut.addEventListener('click', event => {
+                    event.preventDefault(); event.stopPropagation(); chooseModel(model, explore);
+                });
+                shortcut.addEventListener('keydown', event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault(); event.stopPropagation(); shortcut.click();
+                    }
+                });
+                list.insertBefore(shortcut, explore);
+            }
+        }
+        finishSelection();
+    }
 
     function hasTargetText(element) {
         const text = element.textContent || '';
@@ -15481,6 +15633,10 @@ function init_hide_models(runtime) {
         if (!hasTargetText(paragraph)) return;
         const row = findRow(paragraph);
         if (!row) return;
+        hideRow(row);
+    }
+
+    function hideRow(row) {
         if (!hiddenRows.has(row)) hiddenRows.set(row, {
             display: row.style.getPropertyValue('display'),
             priority: row.style.getPropertyPriority('display'),
@@ -15500,10 +15656,11 @@ function init_hide_models(runtime) {
         scheduled = false;
         for (const root of pendingRoots) if (root === document || root.isConnected) scan(root);
         pendingRoots.clear();
+        updateQuickMenus();
         // React can reuse a model row for a different model. Restore its original styling.
         for (const [row, previous] of hiddenRows) {
             if (!row.isConnected) { hiddenRows.delete(row); continue; }
-            if (Array.from(row.querySelectorAll('p')).some(hasTargetText)) continue;
+            if (row.hasAttribute('data-sc-excluded-model') || Array.from(row.querySelectorAll('p')).some(hasTargetText)) continue;
             if (previous.display) row.style.setProperty('display', previous.display, previous.priority);
             else row.style.removeProperty('display');
             if (previous.marker === null) row.removeAttribute('data-hidden-by-tampermonkey');
@@ -15519,6 +15676,7 @@ function init_hide_models(runtime) {
     }
 
     scan(document);
+    updateQuickMenus();
     const observer = new MutationObserver(mutations => {
         let changed = false;
         for (const mutation of mutations) {
@@ -15528,7 +15686,7 @@ function init_hide_models(runtime) {
             for (const node of mutation.addedNodes) {
                 if (node.nodeType === Node.ELEMENT_NODE) { pendingRoots.add(node); changed = true; }
             }
-            if (mutation.removedNodes.length && hiddenRows.size) changed = true;
+            if (mutation.removedNodes.length) changed = true;
         }
         if (changed) schedule();
     });
@@ -15563,7 +15721,7 @@ const gm = {
 const store = createStore(MODULE_CATALOG, gm);
 const controls = createInterface({ store, catalog: MODULE_CATALOG, storage: localStorage, version: SUITE_VERSION });
 GM_registerMenuCommand('SpicyChat Tools — настройки и перенос', controls.open);
-const runtime = { getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters() };
+const runtime = { getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters(), models: QUICK_MODELS, onDomReady };
 const started = new Set();
 
 function startFeature(module) {
@@ -15582,8 +15740,7 @@ function startDomFeatures() {
     catch (error) { console.error('[SpicyChat Tools] Не удалось открыть настройки. Остальные функции продолжают запуск.', error); }
     for (const module of MODULE_CATALOG) if (module.phase === 'dom') startFeature(module);
 }
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startDomFeatures, { once: true });
-else startDomFeatures();
+onDomReady(startDomFeatures);
 
 
 })();
