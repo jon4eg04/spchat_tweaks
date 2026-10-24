@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SpicyChat Tools
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
-// @version      1.0.4
+// @version      1.0.5
 // @description  Единый комплект из 12 функций SpicyChat с локальными настройками и переносом старых данных.
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
@@ -9,7 +9,6 @@
 // @match        https://www.spicychat.ai/*
 // @match        https://*.spicychat.ai/*
 // @run-at       document-start
-// @noframes
 // @grant        unsafeWindow
 // @grant        GM_addStyle
 // @grant        GM_getValue
