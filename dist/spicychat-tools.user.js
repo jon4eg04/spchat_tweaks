@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SpicyChat Tools
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
-// @version      1.0.6
+// @version      1.0.7
 // @description  Единый комплект из 12 функций SpicyChat с локальными настройками и переносом старых данных.
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
@@ -26,7 +26,7 @@
 (function () {
 'use strict';
 
-const SUITE_VERSION = "1.0.6";
+const SUITE_VERSION = "1.0.7";
 
 const MODULE_CATALOG = [
   {
@@ -1036,6 +1036,57 @@ const QUICK_MODELS = Object.freeze([
     { id: 'glm51', label: 'Glam 5.1' },
     { id: 'mimo-v26-pro', label: 'MiMo V2.6 Pro', description: 'A flagship model with a natural, lively writing voice. MiMo V2.6 Pro writes dialogue that sounds like real people talking, handles banter and comedy with sharp timing, and keeps characters true to their personality. It moves the story forward on its own, avoids repetitive phrasing, and weaves in lore and world details well. Best for character-driven roleplay, adventure and fantasy stories, and multi-character scenes.' },
 ]);
+
+
+// ---- src/core/native-models.js ----
+
+// Narrow adapter for the native quick-model row contract supplied from the page.
+// Component names and React's randomized expando suffix are deliberately ignored.
+function createNativeModelAdapter() {
+    const page = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+
+    return {
+        read(row, expected) {
+            if (!row || !expected) return null;
+            try {
+                // Firefox userscript Xrays hide React's page-owned expandos.
+                const node = row.wrappedJSObject || row;
+                const keys = Object.keys(node);
+                const propsKey = keys.find(key => key.startsWith('__reactProps$'));
+                const fiberKey = keys.find(key => key.startsWith('__reactFiber$'));
+                const onClick = node[propsKey]?.onClick;
+                if (typeof onClick !== 'function') return null;
+                let fiber = node[fiberKey];
+                for (let depth = 0; fiber && depth < 12; depth++, fiber = fiber.return) {
+                    // A DOM expando can retain the alternate after a React commit.
+                    // X forwards wd's onClick unchanged, so the live host props
+                    // identify the committed row without relying on fiber names.
+                    for (const current of [fiber, fiber.alternate]) {
+                        const props = current?.memoizedProps;
+                        if (props?.model?.id !== expected.id || props.model.name !== expected.label) continue;
+                        if (current.child?.memoizedProps?.onClick !== onClick) continue;
+                        if (props.action || props.isLocked || props.model.isDisabled) return null;
+                        if (typeof props.clickHandler !== 'function' || typeof props.activeModel !== 'string') return null;
+                        return {
+                            activeModel: props.activeModel,
+                            select(model) {
+                                // Pass a page-realm object: the page must not read
+                                // privileged userscript objects through Firefox Xrays.
+                                const value = new page.Object();
+                                value.id = model.id;
+                                value.name = model.label;
+                                props.clickHandler(value);
+                            },
+                        };
+                    }
+                }
+            } catch (error) {
+                console.warn('[SpicyChat Tools] Не удалось прочитать обработчик выбора модели.', error);
+            }
+            return null;
+        },
+    };
+}
 
 
 // ---- src/modules/per-chat.js ----
@@ -15505,57 +15556,38 @@ function init_hide_models(runtime) {
     let scheduled = false;
     const models = runtime.models;
     const shortcutAttribute = 'data-sc-quick-model';
-    let pendingSelection = null;
 
     function title(row) { return row?.querySelector('p')?.textContent.trim() || ''; }
     function quickRows(panel) {
         return [...panel.querySelectorAll('div.cursor-pointer')].filter(row =>
             row.classList.contains('px-[18px]') && row.classList.contains('py-[10px]'));
     }
-    function nativeModelCard(label) {
-        for (const gate of document.querySelectorAll('[data-testid="ChatOpenaiModelSelectModelCapabilityGate"]')) {
-            if (title(gate) !== label) continue;
-            const row = gate.closest('div.cursor-pointer');
-            if (row && row.getClientRects().length && getComputedStyle(row).visibility !== 'hidden') return row;
+    function nativeBinding(rows) {
+        for (const row of rows) {
+            const expected = models.find(model => model.label === title(row));
+            if (!expected) continue;
+            const binding = runtime.nativeModels.read(row, expected);
+            if (binding) return binding;
         }
         return null;
     }
 
-    function finishSelection() {
-        if (!pendingSelection) return;
-        if (location.pathname !== pendingSelection.path) {
-            clearTimeout(pendingSelection.timer); pendingSelection = null; return;
-        }
-        const row = nativeModelCard(pendingSelection.label);
-        if (!row) return;
-        clearTimeout(pendingSelection.timer);
-        pendingSelection = null;
-        // Use the site's actual handler, including its subscription/capability checks.
-        row.click();
+    function updateShortcutState(shortcut, model, binding) {
+        const disabled = !binding;
+        const state = disabled ? 'true' : 'false';
+        if (shortcut.getAttribute('aria-disabled') !== state) shortcut.setAttribute('aria-disabled', state);
+        shortcut.tabIndex = disabled ? -1 : 0;
+        shortcut.title = disabled ? 'Не удалось подключить штатный выбор модели. Перезагрузи страницу.' : '';
+        const check = shortcut.querySelector('[data-sc-model-check]');
+        const selected = binding?.activeModel === model.id;
+        if (selected && !check) {
+            // Same check icon, size and color as the supplied native row.
+            const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            for (const [name, value] of Object.entries({ width: '20', height: '20', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: 'lucide lucide-check inline-flex items-center justify-center text-blue-10', 'data-sc-model-check': 'true', 'aria-hidden': 'true' })) icon.setAttribute(name, value);
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', 'M20 6 9 17l-5-5'); icon.append(path); shortcut.append(icon);
+        } else if (!selected) check?.remove();
     }
-
-    function chooseModel(model, explore) {
-        if (pendingSelection) return;
-        const existing = nativeModelCard(model.label);
-        if (existing) { existing.click(); return; }
-        pendingSelection = {
-            label: model.label, path: location.pathname,
-            // Leave the native chooser usable if its structure/network changes.
-            timer: setTimeout(() => { pendingSelection = null; }, 5000),
-        };
-        explore.click();
-        finishSelection();
-    }
-
-    // A user dismissing the chooser must cancel an outstanding automatic selection.
-    document.addEventListener('pointerdown', () => {
-        if (pendingSelection) { clearTimeout(pendingSelection.timer); pendingSelection = null; }
-    }, true);
-    document.addEventListener('keydown', event => {
-        if (event.key === 'Escape' && pendingSelection) {
-            clearTimeout(pendingSelection.timer); pendingSelection = null;
-        }
-    }, true);
 
     function updateQuickMenus() {
         for (const panel of document.querySelectorAll('[data-testid="Dropdown-Panel"]')) {
@@ -15564,6 +15596,7 @@ function init_hide_models(runtime) {
             if (!explore) continue; // Never rewrite unrelated dropdowns or the full chooser.
             const list = explore.parentElement;
             const nativeRows = rows.filter(row => row.parentElement === list && !row.hasAttribute(shortcutAttribute));
+            const binding = nativeBinding(nativeRows);
             const firstControl = [...list.children].find(row => title(row) === 'Available models');
             if (firstControl && firstControl.style.order !== '-10') firstControl.style.order = '-10';
             for (const row of nativeRows) {
@@ -15578,7 +15611,7 @@ function init_hide_models(runtime) {
                 const native = nativeRows.find(row => title(row) === model.label);
                 let shortcut = list.querySelector(`[${shortcutAttribute}="${model.id}"]`);
                 if (native) { shortcut?.remove(); continue; }
-                if (shortcut) continue;
+                if (shortcut) { updateShortcutState(shortcut, model, binding); continue; }
                 const template = nativeRows.find(row => models.some(item => item.label === title(row)));
                 if (!template) continue;
                 shortcut = template.cloneNode(true);
@@ -15603,17 +15636,23 @@ function init_hide_models(runtime) {
                 // Badges have wrappers that would otherwise leave empty bordered boxes.
                 for (const node of [...shortcut.querySelectorAll('div')].reverse()) if (!node.textContent.trim()) node.remove();
                 shortcut.addEventListener('click', event => {
-                    event.preventDefault(); event.stopPropagation(); chooseModel(model, explore);
+                    event.preventDefault(); event.stopPropagation();
+                    // Resolve again after any intervening React updates; never
+                    // retain a callback from a previous opening of the menu.
+                    const currentRows = quickRows(panel).filter(row => !row.hasAttribute(shortcutAttribute));
+                    const current = panel.isConnected && nativeBinding(currentRows);
+                    if (!current) { updateShortcutState(shortcut, model, null); return; }
+                    current.select(model);
                 });
                 shortcut.addEventListener('keydown', event => {
                     if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault(); event.stopPropagation(); shortcut.click();
                     }
                 });
+                updateShortcutState(shortcut, model, binding);
                 list.insertBefore(shortcut, explore);
             }
         }
-        finishSelection();
     }
 
     function hasTargetText(element) {
@@ -15721,7 +15760,7 @@ const gm = {
 const store = createStore(MODULE_CATALOG, gm);
 const controls = createInterface({ store, catalog: MODULE_CATALOG, storage: localStorage, version: SUITE_VERSION });
 GM_registerMenuCommand('SpicyChat Tools — настройки и перенос', controls.open);
-const runtime = { getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters(), models: QUICK_MODELS, onDomReady };
+const runtime = { getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters(), models: QUICK_MODELS, nativeModels: createNativeModelAdapter(), onDomReady };
 const started = new Set();
 
 function startFeature(module) {
