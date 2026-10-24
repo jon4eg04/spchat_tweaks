@@ -77,30 +77,54 @@ export function createDomAdapters() {
                 || Array.from(record.addedNodes).some(touches) || Array.from(record.removedNodes).some(touches))) notify();
         }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-expanded', 'aria-label', 'data-state'] });
     }
-    function menuContainer(item) {
-        const menu = item.closest('[role="menu"], [data-radix-menu-content]');
-        if (menu) return menu;
-        return item.parentElement;
+    const menuSelector = '[role="menu"], [data-radix-menu-content]';
+    const actionsFor = kind => kind === 'message' ? ['copy', 'edit']
+        : kind === 'chat' ? ['saved', 'newChat', 'remove'] : ['image', 'suggest', 'search', 'command'];
+    function isMenu(menu, kind, controlled = false) {
+        if (!menu || menu === document.body || menu === document.documentElement || !visible(menu)) return false;
+        // A composer can contain the very same image/lightbulb buttons as a menu.
+        // Neither a button, its tooltip wrapper, nor any ancestor of the input is a menu.
+        if (menu.matches(items) || menu.querySelector('textarea, [contenteditable="true"], ' + Object.values(triggerSelectors).join(','))) return false;
+        const actions = actionsFor(kind).filter(action => findAction(menu, action, true));
+        if (!actions.length) return false;
+        if (controlled || menu.matches(menuSelector)) return true;
+        if (kind === 'plus') return actions.length >= 2 && (actions.includes('search') || actions.includes('command'));
+        if (kind === 'chat') return actions.length >= 2;
+        return actions.includes('copy');
+    }
+    function menuContainer(item, kind) {
+        for (let menu = item?.parentElement; menu && menu !== document.body; menu = menu.parentElement) {
+            if (isMenu(menu, kind)) return menu;
+            if (menu.querySelector('textarea, [contenteditable="true"]')) break;
+        }
+        return null;
     }
     function findMenu(kind, button) {
-        const actions = kind === 'message' ? ['copy', 'edit'] : kind === 'chat' ? ['saved', 'newChat'] : ['image', 'suggest', 'search', 'command'];
-        const fits = menu => menu && visible(menu) && actions.some(action => findAction(menu, action));
-        const controlled = button?.getAttribute('aria-controls');
+        if (!button?.isConnected || button.getAttribute('aria-expanded') === 'false') return null;
+        const controlled = button.getAttribute('aria-controls');
         if (controlled) {
             const menu = document.getElementById(controlled);
-            if (fits(menu)) return menu;
+            if (isMenu(menu, kind, true)) return menu;
         }
-        const boundary = kind === 'message' ? button?.closest('[id^="message-"]') : null;
-        let host = button?.parentElement;
+        const boundary = kind === 'message' ? button.closest('[id^="message-"]') : null;
+        let host = button.parentElement;
         for (let depth = 0; host && depth < 4 && host !== document.body; depth++, host = host.parentElement) {
-            for (const child of host.children) if (!child.contains(button) && fits(child)) return child;
+            for (const child of host.children) {
+                if (child.contains(button)) continue;
+                // Prefer the actual menu, not a surrounding layout wrapper.
+                for (const action of actionsFor(kind)) {
+                    const item = findAction(child, action, true);
+                    const menu = menuContainer(item, kind);
+                    if (menu && child.contains(menu)) return menu;
+                }
+            }
             if (host === boundary) break;
         }
         if (active[kind] !== button) return null;
         for (const item of document.querySelectorAll(items)) {
-            if (!visible(item) || !actions.some(action => isAction(item, action))) continue;
-            const menu = menuContainer(item);
-            if (fits(menu)) return menu;
+            if (!visible(item) || !actionsFor(kind).some(action => isAction(item, action))) continue;
+            const menu = menuContainer(item, kind);
+            if (menu) return menu;
         }
         return null;
     }

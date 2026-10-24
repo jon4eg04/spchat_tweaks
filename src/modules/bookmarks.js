@@ -1027,44 +1027,7 @@ export default function init(runtime) {
     }
 
     function findChatMenu(dropdown) {
-        const portal = runtime.dom?.chatMenu(dropdown);
-        if (portal) return portal;
-        const wrapper = dropdown?.parentElement;
-        if (wrapper) {
-            const directSibling = dropdown.nextElementSibling;
-            if (directSibling?.querySelector('button[aria-label="View Saved Chats" i]')) {
-                return directSibling;
-            }
-
-            const nestedMenu = Array.from(wrapper.children).find((child) => (
-                child !== dropdown
-                && child.querySelector?.('button[aria-label="View Saved Chats" i]')
-            ));
-            if (nestedMenu) return nestedMenu;
-        }
-
-        // В актуальной версии SpicyChat меню рендерится через React-портал
-        // и не является ни соседом, ни потомком кнопки chat-dropdown.
-        const portalMenus = Array.from(
-            document.querySelectorAll('button[aria-label="View Saved Chats" i]'),
-        ).map((button) => button.parentElement).filter((menu) => (
-            menu
-            && menu.querySelector('button[aria-label="Start New Chat" i]')
-            && menu.querySelector('button[aria-label="Remove Messages" i]')
-        ));
-
-        const visibleMenu = portalMenus.find((menu) => {
-            const rect = menu.getBoundingClientRect();
-            const style = getComputedStyle(menu);
-            return (
-                rect.width > 0
-                && rect.height > 0
-                && style.display !== 'none'
-                && style.visibility !== 'hidden'
-            );
-        });
-
-        return visibleMenu || portalMenus[0] || null;
+        return runtime.dom.chatMenu(dropdown);
     }
 
     function normalizeCustomChatMenuOrder(menu) {

@@ -1546,31 +1546,7 @@ export default function init(runtime) {
     }
 
     function findChatMenu(dropdown) {
-        const portal = runtime.dom?.chatMenu(dropdown);
-        if (portal) return portal;
-        const wrapper = dropdown?.parentElement;
-        if (wrapper) {
-            const sibling = dropdown.nextElementSibling;
-            if (sibling?.querySelector('button[aria-label="View Saved Chats" i]')) return sibling;
-            const nested = Array.from(wrapper.children).find((child) => (
-                child !== dropdown && child.querySelector?.('button[aria-label="View Saved Chats" i]')
-            ));
-            if (nested) return nested;
-        }
-
-        const menus = Array.from(
-            document.querySelectorAll('button[aria-label="View Saved Chats" i]'),
-        ).map((button) => button.parentElement).filter((menu) => (
-            menu
-            && menu.querySelector('button[aria-label="Start New Chat" i]')
-        ));
-        const visible = menus.find((menu) => {
-            const style = getComputedStyle(menu);
-            const rect = menu.getBoundingClientRect();
-            return style.display !== 'none' && style.visibility !== 'hidden'
-                && rect.width > 0 && rect.height > 0;
-        });
-        return visible || menus[0] || null;
+        return runtime.dom.chatMenu(dropdown);
     }
 
     function normalizeCustomChatMenuOrder(menu) {

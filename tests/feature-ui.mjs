@@ -4,15 +4,15 @@ import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.PLAYWRIGHT_PACKAGE || 'playwright');
-const bundle = await readFile(new URL('../dist/spicychat-tools.user.js', import.meta.url), 'utf8');
+const bundle = await readFile(process.env.FEATURE_BUNDLE || new URL('../dist/spicychat-tools.user.js', import.meta.url), 'utf8');
 const bot = '11111111-1111-4111-8111-111111111111';
 const chat = '22222222-2222-4222-8222-222222222222';
 const messages = ['33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'];
 const html = `<!doctype html><html><head><style>
-body{margin:32px;font:16px sans-serif}button,[role=menuitem]{padding:8px;cursor:pointer}textarea{width:500px;height:80px}[role=menu]{position:fixed;left:40px;top:100px;background:white;z-index:50;border:1px solid;min-width:240px}[role=menuitem]{display:block}#composer{margin-top:40px}.flex{display:flex}.relative{position:relative}[id^=message-]{margin:12px}
+body{margin:32px;font:16px sans-serif}button,[role=menuitem]{padding:8px;cursor:pointer}textarea{width:500px;height:80px}[data-fixture-menu]{position:fixed;left:40px;top:100px;background:white;z-index:50;border:1px solid;min-width:240px}[role=menuitem]{display:block}#composer{margin-top:40px}.flex{display:flex}.relative{position:relative}[id^=message-]{margin:12px}
 </style></head><body><button aria-label="chat-dropdown">Chat menu</button>
 <div id="thread">${messages.map((id, i) => `<div id="message-${id}"><div class="flex justify-between items-center gap-md${i ? ' flex-row-reverse' : ''}"><span>${i ? 'You' : 'Character'}</span><div class="relative"><button aria-label="message-dropdown">Message menu</button></div></div><div class="[overflow-wrap:anywhere]"><p>${i ? 'Second plain message' : 'First <em>formatted</em> message'}</p></div></div>`).join('')}</div>
-<div id="composer" class="flex items-end gap-sm w-full"><button aria-label="Plus-button">+</button><div class="w-full flex"><div class="grow border-1 border-solid border-gray-5 rounded-[13px] py-sm px-2 bg-gray-3"><div class="flex flex-1 items-end gap-1"><textarea placeholder="Message..."></textarea></div></div></div><button aria-label="send-message">Send</button></div>
+<div id="composer" class="flex items-end gap-sm w-full"><button aria-label="Plus-button">+</button><div data-tooltip-content="Generate image"><button aria-label="Generate image" data-testid="ImageGenerationButton">Image</button></div><div class="w-full flex"><div class="grow border-1 border-solid border-gray-5 rounded-[13px] py-sm px-2 bg-gray-3"><div class="flex flex-1 items-end gap-1"><textarea placeholder="Message..."></textarea></div></div></div><button aria-label="send-message">Send</button></div>
 <img width="20" height="20" src="https://cdn.nd-api.com/conversations/${chat}/fixture.png">
 </body></html>`;
 const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_EXECUTABLE || undefined, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
@@ -64,16 +64,21 @@ async function fixture(disabled = {}) {
                 surface.onclick = () => { selected = message; remove.disabled = false; }; message.append(surface);
             }
         }
+        document.querySelector('[data-testid=ImageGenerationButton]').onclick = () => __actions.image++;
         document.querySelector('[aria-label=send-message]').onclick = () => __actions.send++;
+        window.addEventListener('pointerdown', event => {
+            const menu = document.querySelector('[data-fixture-menu]');
+            if (menu && !menu.contains(event.target) && !menu.__trigger.contains(event.target)) menu.remove();
+        }, true);
         // Native menus live in a body portal, have role items rather than buttons,
         // and expose text instead of the old English aria labels.
         for (const button of document.querySelectorAll('[aria-label$=dropdown], [aria-label=Plus-button]')) button.addEventListener('click', () => {
-            const existing = document.querySelector('[role=menu]');
+            const existing = document.querySelector('[data-fixture-menu]');
             if (existing?.__trigger === button) { existing.remove(); return; }
             existing?.remove();
             const kind = button.getAttribute('aria-label');
             const labels = kind === 'message-dropdown' ? ['Copy', 'Edit'] : kind === 'chat-dropdown' ? ['View Saved Chats', 'Start New Chat', 'Remove Messages'] : ['Generate Image', 'Suggest Reply', 'Web Search', 'Command (OOC)'];
-            const menu = document.createElement('div'); menu.setAttribute('role', 'menu'); menu.__trigger = button;
+            const menu = document.createElement('div'); menu.dataset.fixtureMenu = 'true'; if (!window.__plainMenus) menu.setAttribute('role', 'menu'); menu.__trigger = button;
             for (const label of labels) {
                 const item = document.createElement('div'); item.setAttribute('role', 'menuitem'); item.tabIndex = 0; item.textContent = label;
                 item.onclick = () => { if (label === 'Remove Messages') removalMode(); if (label === 'Suggest Reply') __actions.suggest++; if (label === 'Generate Image') __actions.image++; menu.remove(); };
@@ -86,7 +91,19 @@ async function fixture(disabled = {}) {
     await page.locator('.tm-sc-emoji-trigger').waitFor();
     return page;
 }
+const nativeOnly = await fixture({ buttons: false });
+await nativeOnly.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+assert.equal(await nativeOnly.locator('.tm-sc-response-length-menu-item, .tm-sc-persistent-command-menu-item').count(), 0, 'visible native image button must not be treated as an open menu');
+await nativeOnly.evaluate(() => { window.__plainMenus = true; });
+await nativeOnly.locator('[aria-label=Plus-button]').click();
+await nativeOnly.locator('.tm-sc-response-length-menu-item').waitFor();
+assert.equal(await nativeOnly.locator('[data-fixture-menu] .tm-sc-response-length-menu-item').count(), 1);
+await nativeOnly.locator('#thread').click({ position: { x: 2, y: 2 } });
+assert.equal(await nativeOnly.locator('.tm-sc-response-length-menu-item, .tm-sc-persistent-command-menu-item').count(), 0);
+scenarios.push('visible-native-image-control-is-not-a-menu');
 const page = await fixture();
+await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+assert.equal(await page.locator('.tm-sc-response-length-menu-item, .tm-sc-persistent-command-menu-item').count(), 0, 'closed menus must not inject settings into composer controls');
 const draft = page.locator('textarea[placeholder="Message..."]');
 await draft.fill('Saved draft'); await page.locator('.tm-sc-save-current-text').click();
 await page.waitForFunction(bot => __gm.get(`tm-sc-saved-texts-v1:bot:${bot}`)?.length === 1, bot);
@@ -122,11 +139,39 @@ await page.evaluate(async chat => {
 const generated = JSON.parse(requests.findLast(req => req.url.endsWith('/chat') && req.method === 'POST').body);
 assert.equal(generated.inference_settings.max_new_tokens, 420); assert.equal(generated.inference_model, 'deepseek-v4pro'); assert.equal(generated.message, 'Hello\n\n/cmd Fixture command');
 scenarios.push('plus-portal-token-model-command-settings', 'generation-request-rewrite');
+// Dismissal must leave no copies beside the input or hidden native controls.
+for (const item of ['.tm-sc-response-length-menu-item', '.tm-sc-persistent-command-menu-item']) {
+    const popup = item.includes('persistent') ? '#tm-sc-persistent-command-popup' : '#tm-sc-response-length-popup';
+    await page.locator('[aria-label=Plus-button]').click();
+    await page.locator(item).waitFor();
+    assert.equal(await page.locator('[role=menu] ' + item).count(), 1);
+    await page.locator(item).click();
+    await page.locator(popup).waitFor({ state: 'visible' });
+    await page.locator(popup + ' h2').click();
+    assert.equal(await page.locator(popup).isVisible(), true, 'clicks inside must keep the popup open');
+    await page.locator('#thread').click({ position: { x: 2, y: 2 } });
+    await page.locator(popup).waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('.tm-sc-response-length-menu-item, .tm-sc-persistent-command-menu-item').count(), 0);
+    await page.locator('[aria-label=Plus-button]').click(); await page.locator(item).click();
+    await page.locator(popup).waitFor({ state: 'visible' });
+    await page.evaluate(() => document.querySelector('#thread').click());
+    await page.locator(popup).waitFor({ state: 'hidden' });
+    await page.locator('[aria-label=Plus-button]').click(); await page.locator(item).click();
+    await page.locator(popup).waitFor({ state: 'visible' }); await page.keyboard.press('Escape');
+    await page.locator(popup).waitFor({ state: 'hidden' });
+}
+await page.locator('[aria-label=Plus-button]').click();
+await page.locator('.tm-sc-response-length-menu-item').waitFor();
+await page.locator('#thread').click({ position: { x: 2, y: 2 } });
+await page.waitForFunction(() => !document.querySelector('[data-fixture-menu]'));
+assert.equal(await page.locator('.tm-sc-response-length-menu-item, .tm-sc-persistent-command-menu-item').count(), 0);
+scenarios.push('settings-and-command-outside-click', 'settings-click-only-dismissal', 'settings-escape', 'native-menu-dismissal-without-duplicates');
+
 await page.locator(`#message-${messages[0]} [aria-label=message-dropdown]`).click();
 await page.locator('.tm-sc-save-history-message').click();
 await page.waitForFunction(bot => __gm.get(`tm-sc-saved-texts-v1:bot:${bot}`)?.length === 2, bot);
 assert.equal(await page.evaluate(bot => __gm.get(`tm-sc-saved-texts-v1:bot:${bot}`)[1].text, bot), 'First *formatted* message');
-await page.waitForFunction(() => !document.querySelector('[role=menu]'));
+await page.waitForFunction(() => !document.querySelector('[data-fixture-menu]'));
 async function bookmark(page, index, title) {
     await page.locator(`#message-${messages[index]} [aria-label=message-dropdown]`).click();
     await page.locator('.tm-sc-add-message-bookmark').click();
@@ -170,7 +215,7 @@ await bookmark(independent, 1, 'Independent bookmark');
 await independent.locator(`#message-${messages[1]} [aria-label=message-dropdown]`).click();
 await independent.locator('.tm-sc-add-message-bookmark').waitFor();
 await independent.evaluate(() => {
-    const menu = document.querySelector('[role=menu]');
+    const menu = document.querySelector('[data-fixture-menu]');
     menu.__trigger = document.querySelector('[id^=message-] [aria-label=message-dropdown]');
     menu.__trigger.addEventListener('click', event => event.stopImmediatePropagation(), true);
     menu.__trigger.click();

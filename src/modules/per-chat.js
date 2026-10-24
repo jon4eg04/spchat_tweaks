@@ -714,20 +714,7 @@ export default function init(runtime) {
     }
 
     function findOpenPlusMenu(plusButton) {
-        const portal = runtime.dom?.plusMenu(plusButton);
-        if (portal) return portal;
-        let host = plusButton?.parentElement || null;
-        for (let depth = 0; host && depth < 4; depth += 1) {
-            for (const child of host.children) {
-                if (!(child instanceof HTMLElement) || child.contains(plusButton)) continue;
-                if (
-                    child.matches(NATIVE_MENU_ITEM_SELECTOR)
-                    || child.querySelector(NATIVE_MENU_ITEM_SELECTOR)
-                ) return child;
-            }
-            host = host.parentElement;
-        }
-        return null;
+        return runtime.dom.plusMenu(plusButton);
     }
 
     function createMenuItem(referenceButton, plusButton) {
@@ -1160,7 +1147,7 @@ export default function init(runtime) {
             if (plusButton) window.setTimeout(scheduleEnsureMenuItems, 0);
         }, true);
 
-        document.addEventListener('pointerdown', (event) => {
+        const closePopupsOutside = (event) => {
             const insideTokenPopup = popup && !popup.hidden && popup.contains(event.target);
             const insideCommandPopup = commandPopup
                 && !commandPopup.hidden
@@ -1168,7 +1155,10 @@ export default function init(runtime) {
             if (insideTokenPopup || insideCommandPopup) return;
             closePopup();
             closeCommandPopup();
-        }, true);
+        };
+        // Capture before site handlers; also support click-only/keyboard activation.
+        window.addEventListener('pointerdown', closePopupsOutside, true);
+        window.addEventListener('click', closePopupsOutside, true);
 
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && popup && !popup.hidden) closePopup();
