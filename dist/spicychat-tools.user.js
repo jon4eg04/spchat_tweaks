@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SpicyChat Tools
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
-// @version      1.0.3
+// @version      1.0.4
 // @description  Единый комплект из 12 функций SpicyChat с локальными настройками и переносом старых данных.
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
@@ -27,7 +27,7 @@
 (function () {
 'use strict';
 
-const SUITE_VERSION = "1.0.3";
+const SUITE_VERSION = "1.0.4";
 
 const MODULE_CATALOG = [
   {
@@ -891,30 +891,54 @@ function createDomAdapters() {
                 || Array.from(record.addedNodes).some(touches) || Array.from(record.removedNodes).some(touches))) notify();
         }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['aria-expanded', 'aria-label', 'data-state'] });
     }
-    function menuContainer(item) {
-        const menu = item.closest('[role="menu"], [data-radix-menu-content]');
-        if (menu) return menu;
-        return item.parentElement;
+    const menuSelector = '[role="menu"], [data-radix-menu-content]';
+    const actionsFor = kind => kind === 'message' ? ['copy', 'edit']
+        : kind === 'chat' ? ['saved', 'newChat', 'remove'] : ['image', 'suggest', 'search', 'command'];
+    function isMenu(menu, kind, controlled = false) {
+        if (!menu || menu === document.body || menu === document.documentElement || !visible(menu)) return false;
+        // A composer can contain the very same image/lightbulb buttons as a menu.
+        // Neither a button, its tooltip wrapper, nor any ancestor of the input is a menu.
+        if (menu.matches(items) || menu.querySelector('textarea, [contenteditable="true"], ' + Object.values(triggerSelectors).join(','))) return false;
+        const actions = actionsFor(kind).filter(action => findAction(menu, action, true));
+        if (!actions.length) return false;
+        if (controlled || menu.matches(menuSelector)) return true;
+        if (kind === 'plus') return actions.length >= 2 && (actions.includes('search') || actions.includes('command'));
+        if (kind === 'chat') return actions.length >= 2;
+        return actions.includes('copy');
+    }
+    function menuContainer(item, kind) {
+        for (let menu = item?.parentElement; menu && menu !== document.body; menu = menu.parentElement) {
+            if (isMenu(menu, kind)) return menu;
+            if (menu.querySelector('textarea, [contenteditable="true"]')) break;
+        }
+        return null;
     }
     function findMenu(kind, button) {
-        const actions = kind === 'message' ? ['copy', 'edit'] : kind === 'chat' ? ['saved', 'newChat'] : ['image', 'suggest', 'search', 'command'];
-        const fits = menu => menu && visible(menu) && actions.some(action => findAction(menu, action));
-        const controlled = button?.getAttribute('aria-controls');
+        if (!button?.isConnected || button.getAttribute('aria-expanded') === 'false') return null;
+        const controlled = button.getAttribute('aria-controls');
         if (controlled) {
             const menu = document.getElementById(controlled);
-            if (fits(menu)) return menu;
+            if (isMenu(menu, kind, true)) return menu;
         }
-        const boundary = kind === 'message' ? button?.closest('[id^="message-"]') : null;
-        let host = button?.parentElement;
+        const boundary = kind === 'message' ? button.closest('[id^="message-"]') : null;
+        let host = button.parentElement;
         for (let depth = 0; host && depth < 4 && host !== document.body; depth++, host = host.parentElement) {
-            for (const child of host.children) if (!child.contains(button) && fits(child)) return child;
+            for (const child of host.children) {
+                if (child.contains(button)) continue;
+                // Prefer the actual menu, not a surrounding layout wrapper.
+                for (const action of actionsFor(kind)) {
+                    const item = findAction(child, action, true);
+                    const menu = menuContainer(item, kind);
+                    if (menu && child.contains(menu)) return menu;
+                }
+            }
             if (host === boundary) break;
         }
         if (active[kind] !== button) return null;
         for (const item of document.querySelectorAll(items)) {
-            if (!visible(item) || !actions.some(action => isAction(item, action))) continue;
-            const menu = menuContainer(item);
-            if (fits(menu)) return menu;
+            if (!visible(item) || !actionsFor(kind).some(action => isAction(item, action))) continue;
+            const menu = menuContainer(item, kind);
+            if (menu) return menu;
         }
         return null;
     }
@@ -1692,20 +1716,7 @@ function init_per_chat(runtime) {
     }
 
     function findOpenPlusMenu(plusButton) {
-        const portal = runtime.dom?.plusMenu(plusButton);
-        if (portal) return portal;
-        let host = plusButton?.parentElement || null;
-        for (let depth = 0; host && depth < 4; depth += 1) {
-            for (const child of host.children) {
-                if (!(child instanceof HTMLElement) || child.contains(plusButton)) continue;
-                if (
-                    child.matches(NATIVE_MENU_ITEM_SELECTOR)
-                    || child.querySelector(NATIVE_MENU_ITEM_SELECTOR)
-                ) return child;
-            }
-            host = host.parentElement;
-        }
-        return null;
+        return runtime.dom.plusMenu(plusButton);
     }
 
     function createMenuItem(referenceButton, plusButton) {
@@ -2138,7 +2149,7 @@ function init_per_chat(runtime) {
             if (plusButton) window.setTimeout(scheduleEnsureMenuItems, 0);
         }, true);
 
-        document.addEventListener('pointerdown', (event) => {
+        const closePopupsOutside = (event) => {
             const insideTokenPopup = popup && !popup.hidden && popup.contains(event.target);
             const insideCommandPopup = commandPopup
                 && !commandPopup.hidden
@@ -2146,7 +2157,10 @@ function init_per_chat(runtime) {
             if (insideTokenPopup || insideCommandPopup) return;
             closePopup();
             closeCommandPopup();
-        }, true);
+        };
+        // Capture before site handlers; also support click-only/keyboard activation.
+        window.addEventListener('pointerdown', closePopupsOutside, true);
+        window.addEventListener('click', closePopupsOutside, true);
 
         document.addEventListener('keydown', (event) => {
             if (event.key === 'Escape' && popup && !popup.hidden) closePopup();
@@ -5390,39 +5404,7 @@ function init_gallery(runtime) {
     }
 
     function findChatMenu(dropdown) {
-        const portal = runtime.dom?.chatMenu(dropdown);
-        if (portal) return portal;
-        const wrapper = dropdown?.parentElement;
-        if (wrapper) {
-            const directSibling = dropdown.nextElementSibling;
-            if (directSibling?.querySelector('button[aria-label="View Saved Chats" i]')) return directSibling;
-
-            const nested = Array.from(wrapper.children).find((child) => (
-                child !== dropdown
-                && child.querySelector?.('button[aria-label="View Saved Chats" i]')
-            ));
-            if (nested) return nested;
-        }
-
-        const menus = Array.from(
-            document.querySelectorAll('button[aria-label="View Saved Chats" i]'),
-        ).map((button) => button.parentElement).filter((menu) => (
-            menu
-            && menu.querySelector('button[aria-label="Start New Chat" i]')
-            && menu.querySelector('button[aria-label="Remove Messages" i]')
-        ));
-
-        const visible = menus.find((menu) => {
-            const rect = menu.getBoundingClientRect();
-            const style = getComputedStyle(menu);
-            return (
-                rect.width > 0
-                && rect.height > 0
-                && style.display !== 'none'
-                && style.visibility !== 'hidden'
-            );
-        });
-        return visible || menus[0] || null;
+        return runtime.dom.chatMenu(dropdown);
     }
 
     function normalizeCustomChatMenuOrder(menu) {
@@ -7606,31 +7588,7 @@ function init_branches(runtime) {
     }
 
     function findChatMenu(dropdown) {
-        const portal = runtime.dom?.chatMenu(dropdown);
-        if (portal) return portal;
-        const wrapper = dropdown?.parentElement;
-        if (wrapper) {
-            const sibling = dropdown.nextElementSibling;
-            if (sibling?.querySelector('button[aria-label="View Saved Chats" i]')) return sibling;
-            const nested = Array.from(wrapper.children).find((child) => (
-                child !== dropdown && child.querySelector?.('button[aria-label="View Saved Chats" i]')
-            ));
-            if (nested) return nested;
-        }
-
-        const menus = Array.from(
-            document.querySelectorAll('button[aria-label="View Saved Chats" i]'),
-        ).map((button) => button.parentElement).filter((menu) => (
-            menu
-            && menu.querySelector('button[aria-label="Start New Chat" i]')
-        ));
-        const visible = menus.find((menu) => {
-            const style = getComputedStyle(menu);
-            const rect = menu.getBoundingClientRect();
-            return style.display !== 'none' && style.visibility !== 'hidden'
-                && rect.width > 0 && rect.height > 0;
-        });
-        return visible || menus[0] || null;
+        return runtime.dom.chatMenu(dropdown);
     }
 
     function normalizeCustomChatMenuOrder(menu) {
@@ -9452,44 +9410,7 @@ function init_bookmarks(runtime) {
     }
 
     function findChatMenu(dropdown) {
-        const portal = runtime.dom?.chatMenu(dropdown);
-        if (portal) return portal;
-        const wrapper = dropdown?.parentElement;
-        if (wrapper) {
-            const directSibling = dropdown.nextElementSibling;
-            if (directSibling?.querySelector('button[aria-label="View Saved Chats" i]')) {
-                return directSibling;
-            }
-
-            const nestedMenu = Array.from(wrapper.children).find((child) => (
-                child !== dropdown
-                && child.querySelector?.('button[aria-label="View Saved Chats" i]')
-            ));
-            if (nestedMenu) return nestedMenu;
-        }
-
-        // В актуальной версии SpicyChat меню рендерится через React-портал
-        // и не является ни соседом, ни потомком кнопки chat-dropdown.
-        const portalMenus = Array.from(
-            document.querySelectorAll('button[aria-label="View Saved Chats" i]'),
-        ).map((button) => button.parentElement).filter((menu) => (
-            menu
-            && menu.querySelector('button[aria-label="Start New Chat" i]')
-            && menu.querySelector('button[aria-label="Remove Messages" i]')
-        ));
-
-        const visibleMenu = portalMenus.find((menu) => {
-            const rect = menu.getBoundingClientRect();
-            const style = getComputedStyle(menu);
-            return (
-                rect.width > 0
-                && rect.height > 0
-                && style.display !== 'none'
-                && style.visibility !== 'hidden'
-            );
-        });
-
-        return visibleMenu || portalMenus[0] || null;
+        return runtime.dom.chatMenu(dropdown);
     }
 
     function normalizeCustomChatMenuOrder(menu) {
