@@ -6,9 +6,10 @@ const gm = {
     delete: key => GM_deleteValue(key),
 };
 const store = createStore(MODULE_CATALOG, gm);
-const controls = createInterface({ store, catalog: MODULE_CATALOG, storage: localStorage, version: SUITE_VERSION });
+const quickCommands = createQuickCommands(gm);
+const controls = createInterface({ store, catalog: MODULE_CATALOG, storage: localStorage, version: SUITE_VERSION, quickCommands });
 GM_registerMenuCommand('SpicyChat Tools — настройки и перенос', controls.open);
-const runtime = { getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters(), models: QUICK_MODELS, nativeModels: createNativeModelAdapter(), onDomReady };
+const runtime = { quickCommands, getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters(), models: QUICK_MODELS, nativeModels: createNativeModelAdapter(), onDomReady };
 const started = new Set();
 
 function startFeature(module) {

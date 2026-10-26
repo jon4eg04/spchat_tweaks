@@ -93,7 +93,7 @@ async function fixture(disabled = {}, seed = {}) {
             if (window.__inlineMenus) button.parentElement.append(menu); else document.body.append(menu);
         });
     }, { disabled, bot, chat, seed });
-    await page.addScriptTag({ content: bundle });
+    await page.addScriptTag({ content: bundle.replace("shadowMode = 'closed'", "shadowMode = 'open'") });
     await page.locator('.tm-sc-emoji-trigger').waitFor();
     return page;
 }
@@ -471,6 +471,96 @@ assert.deepEqual(await modelPage.evaluate(() => JSON.parse(localStorage.getItem(
 await modelPage.evaluate(async chat => fetch('https://prod.nd-api.com/chat', { method: 'POST', body: JSON.stringify({ conversation_id: chat, inference_model: 'glm51', message: 'Model test' }) }), chat);
 assert.equal(JSON.parse(requests.findLast(req => req.url.endsWith('/chat') && req.method === 'POST').body).inference_model, 'mimo-v26-pro');
 scenarios.push('shared-per-chat-model-list', 'per-chat-mimo-request-and-legacy-storage-preservation');
+// Manage the real library UI, then select multiple independent CMDs per chat.
+const commandsPage = await fixture();
+const otherChat = '77777777-7777-4777-8777-777777777777';
+await commandsPage.evaluate(({ chat, otherChat }) => {
+    localStorage.setItem('tm-sc-per-chat-persistent-command-v1', JSON.stringify({ [chat]: 'Existing manual', [otherChat]: 'Other manual' }));
+}, { chat, otherChat });
+const settings = commandsPage.locator('#spchat-tools-settings');
+const manager = settings.locator('section').filter({ has: commandsPage.locator('[name=quick-command-name]') });
+const commandPopup = commandsPage.locator('#tm-sc-persistent-command-popup');
+async function openCommands() {
+    await commandsPage.locator('[aria-label=Plus-button]').click();
+    await commandsPage.locator('.tm-sc-persistent-command-menu-item').click();
+    await commandPopup.waitFor({ state: 'visible' });
+}
+async function addQuick(name, text) {
+    await manager.getByLabel('Название команды', { exact: true }).fill(name);
+    await manager.getByLabel('Текст команды', { exact: true }).fill(text);
+    await manager.getByRole('button', { name: 'Добавить команду', exact: true }).click();
+}
+async function generateCommands(conversation = chat) {
+    await commandsPage.evaluate(async conversation => fetch('https://prod.nd-api.com/chat', { method: 'POST', body: JSON.stringify({ conversation_id: conversation, message: 'Commands test' }) }), conversation);
+    return JSON.parse(requests.findLast(request => request.url.endsWith('/chat') && request.method === 'POST').body).message;
+}
+await settings.getByRole('button', { name: 'SC Tools', exact: true }).click();
+await manager.getByRole('button', { name: 'Добавить команду', exact: true }).click();
+await manager.getByRole('status').filter({ hasText: 'Укажи название команды.' }).waitFor();
+assert.equal(await commandsPage.evaluate(() => __gm.has('spchat-tweaks:quick-commands:v1')), false);
+await addQuick('First <b>title</b>', '/cmd First quick text');
+await addQuick('Second quick', 'Second quick text');
+await addQuick('Not selected', 'Do not send');
+assert.equal(await manager.locator('.quick-command-card').count(), 3);
+assert.equal(await manager.getByRole('status').textContent(), 'Команда сохранена.');
+assert.equal(await manager.locator('.quick-command-card h3 b').count(), 0, 'stored names are displayed as literal text');
+await settings.getByRole('button', { name: 'Закрыть', exact: true }).click();
+await openCommands();
+assert.equal(await commandPopup.getByLabel('Текст постоянной команды', { exact: true }).inputValue(), 'Existing manual');
+assert.equal(await commandPopup.getByRole('checkbox').count(), 3);
+await commandPopup.getByRole('checkbox', { name: 'First <b>title</b>', exact: true }).check();
+await commandPopup.getByRole('checkbox', { name: 'Second quick', exact: true }).check();
+assert.equal(await generateCommands(), 'Commands test\n\n/cmd Existing manual', 'checkbox drafts do not apply until Save');
+await commandPopup.locator('.tm-sc-persistent-command-save').click();
+const separateCommands = 'Commands test\n\n/cmd Existing manual\n\n/cmd First quick text\n\n/cmd Second quick text';
+assert.equal(await generateCommands(), separateCommands);
+await openCommands();
+assert.equal(await commandPopup.getByRole('checkbox', { name: 'First <b>title</b>', exact: true }).isChecked(), true);
+assert.equal(await commandPopup.getByRole('checkbox', { name: 'Second quick', exact: true }).isChecked(), true);
+assert.equal(await commandPopup.getByRole('checkbox', { name: 'Not selected', exact: true }).isChecked(), false);
+await commandPopup.getByRole('checkbox', { name: 'Second quick', exact: true }).uncheck();
+await commandsPage.keyboard.press('Escape');
+assert.equal(await generateCommands(), separateCommands, 'Escape discards an unsaved checkbox change');
+await commandsPage.evaluate(({ bot, otherChat }) => history.pushState(null, '', `/chat/${bot}/${otherChat}`), { bot, otherChat });
+await openCommands();
+assert.equal(await commandPopup.getByLabel('Текст постоянной команды', { exact: true }).inputValue(), 'Other manual');
+assert.equal(await commandPopup.locator('input:checked').count(), 0);
+await commandPopup.getByRole('checkbox', { name: 'Not selected', exact: true }).check();
+await commandPopup.locator('.tm-sc-persistent-command-save').click();
+assert.equal(await generateCommands(otherChat), 'Commands test\n\n/cmd Other manual\n\n/cmd Do not send');
+assert.equal(await generateCommands(chat), separateCommands, 'another chat does not change the first selection');
+await commandsPage.evaluate(({ bot, chat }) => history.pushState(null, '', `/chat/${bot}/${chat}`), { bot, chat });
+await settings.getByRole('button', { name: 'SC Tools', exact: true }).click();
+const firstCard = manager.locator('.quick-command-card').filter({ hasText: 'First <b>title</b>' });
+await firstCard.getByRole('button', { name: 'Редактировать', exact: true }).click();
+await manager.getByLabel('Название команды', { exact: true }).fill('Renamed quick');
+await manager.getByLabel('Текст команды', { exact: true }).fill('Changed quick text');
+await manager.getByRole('button', { name: 'Сохранить команду', exact: true }).click();
+await manager.locator('.quick-command-card').filter({ hasText: 'Second quick' }).getByRole('button', { name: 'Удалить', exact: true }).click();
+assert.equal(await manager.locator('.quick-command-card').count(), 2);
+const downloadReady = commandsPage.waitForEvent('download');
+await settings.getByRole('button', { name: 'Скачать копию настроек и данных', exact: true }).click();
+const downloaded = await downloadReady;
+const commandsBackup = JSON.parse(await readFile(await downloaded.path(), 'utf8'));
+assert.equal(commandsBackup.values['spchat-tweaks:quick-commands:v1'].commands.length, 2);
+assert.equal(commandsBackup.values['spchat-tweaks:quick-commands:v1'].selections[chat].length, 1);
+await settings.getByRole('button', { name: 'Закрыть', exact: true }).click();
+assert.equal(await generateCommands(), 'Commands test\n\n/cmd Existing manual\n\n/cmd Changed quick text');
+await openCommands();
+assert.equal(await commandPopup.getByRole('checkbox', { name: 'Renamed quick', exact: true }).isChecked(), true);
+assert.equal(await commandPopup.getByRole('checkbox', { name: 'Second quick', exact: true }).count(), 0);
+await commandsPage.setViewportSize({ width: 520, height: 700 });
+await commandPopup.locator('h2').click();
+const commandBounds = await commandPopup.boundingBox();
+assert.ok(commandBounds.x >= 0 && commandBounds.x + commandBounds.width <= 520 && commandBounds.height <= 676);
+await commandsPage.screenshot({ path: new URL('../test-results/quick-commands-' + browserName + '.png', import.meta.url).pathname });
+await commandPopup.locator('.tm-sc-persistent-command-delete').click();
+assert.equal(await generateCommands(), 'Commands test\n\n/cmd Changed quick text', 'manual deletion retains checked quick commands');
+await openCommands();
+await commandPopup.getByRole('checkbox', { name: 'Renamed quick', exact: true }).uncheck();
+await commandPopup.locator('.tm-sc-persistent-command-save').click();
+assert.equal(await generateCommands(), 'Commands test', 'empty manual plus no checks disables all commands');
+scenarios.push('quick-command-library-create-edit-delete', 'multiple-independent-cmds-and-manual-preserved', 'quick-command-save-escape-and-chat-isolation', 'quick-command-edit-delete-applies-without-retoggling', 'quick-command-backup-and-mobile-layout');
 assert.deepEqual(errors, []);
 console.log(JSON.stringify({ result: 'PASS', scenarios, errors }));
 } finally { await browser.close(); }

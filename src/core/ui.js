@@ -1,8 +1,9 @@
+import { createCommandManager } from './command-manager.js';
 import { MIGRATION_KEY } from './settings.js';
 import { readZip } from './zip.js';
 import { planLegacyImport, planSuiteImport, applyImport, exportSuite } from './migration.js';
 
-export function createInterface({ store, catalog, storage, version, reload = () => location.reload(), shadowMode = 'closed' }) {
+export function createInterface({ store, catalog, storage, version, reload = () => location.reload(), quickCommands, shadowMode = 'closed' }) {
     let host;
     let root;
     let panel;
@@ -11,6 +12,7 @@ export function createInterface({ store, catalog, storage, version, reload = () 
     let preview;
     let plan = null;
     let importedNow = false;
+    let commandManager;
 
     const button = (text, handler, className = '') => {
         const node = document.createElement('button');
@@ -44,6 +46,7 @@ export function createInterface({ store, catalog, storage, version, reload = () 
     }
 
     function fillForm() {
+        commandManager?.refresh();
         const config = store.settings;
         for (const { id } of catalog) form.elements.namedItem(`module-${id}`).checked = config.modules[id];
         for (const id of ['summary', 'tts']) {
@@ -139,10 +142,10 @@ export function createInterface({ store, catalog, storage, version, reload = () 
             :host { all: initial; color-scheme: dark; font: 14px/1.5 system-ui, sans-serif; }
             * { box-sizing: border-box; }
             [hidden] { display: none !important; }
-            button, input { font: inherit; }
+            button, input, textarea { font: inherit; }
             button { cursor: pointer; border: 1px solid #454958; background: #292d3b; color: #f4f4fa; padding: 9px 13px; border-radius: 8px; }
             button:hover { background: #363b4d; }
-            button:focus-visible, input:focus-visible { outline: 2px solid #a9a0ff; outline-offset: 2px; }
+            button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #a9a0ff; outline-offset: 2px; }
             button:disabled { opacity: .5; cursor: default; }
             .primary { background: #7463d9; border-color: #9a8cec; }
             .primary:hover { background: #8674eb; }
@@ -160,7 +163,11 @@ export function createInterface({ store, catalog, storage, version, reload = () 
             input[type=checkbox] { accent-color: #a395f7; margin-top: 4px; }
             .grid small { color: #9a9bb3; margin-left: 4px; }
             .field { display: block; margin-top: 10px; color: #c1c1d1; }
-            input[type=url], input[type=password] { display: block; width: 100%; margin-top: 5px; background: #11131d; color: #f4f4fa; border: 1px solid #454958; padding: 10px; border-radius: 7px; }
+            input[type=url], input[type=password], input[type=text], textarea { display: block; width: 100%; margin-top: 5px; background: #11131d; color: #f4f4fa; border: 1px solid #454958; padding: 10px; border-radius: 7px; }
+            textarea { resize: vertical; min-height: 100px; }
+            .quick-command-card { padding: 12px; margin: 10px 0; border: 1px solid #454958; border-radius: 8px; }
+            .quick-command-card h3 { margin: 0; overflow-wrap: anywhere; }
+            .quick-command-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 100px; overflow: auto; }
             .endpoint { margin-top: 18px; } .endpoint h3 { margin: 0; font-size: 14px; }
             .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 15px; }
             .status { padding: 12px 0 0; color: #a8e6c8; white-space: pre-wrap; }
@@ -195,7 +202,7 @@ export function createInterface({ store, catalog, storage, version, reload = () 
             if (panel.hidden) return;
             if (event.key === 'Escape') { event.stopPropagation(); close(); }
             if (event.key === 'Tab') {
-                const focusable = Array.from(card.querySelectorAll('button:not(:disabled), input:not([type=hidden])')).filter(node => !node.closest('[hidden]'));
+                const focusable = Array.from(card.querySelectorAll('button:not(:disabled), input:not([type=hidden]), textarea')).filter(node => !node.closest('[hidden]'));
                 const first = focusable[0]; const last = focusable.at(-1);
                 if (event.shiftKey && root.activeElement === first) { event.preventDefault(); last?.focus(); }
                 else if (!event.shiftKey && root.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -220,6 +227,9 @@ export function createInterface({ store, catalog, storage, version, reload = () 
             label.append(checkbox, document.createTextNode(module.title)); grid.append(label);
         }
         features.append(grid);
+
+        const commands = section('Быстрые команды', 'Общая библиотека для всех чатов. В меню «+ → Постоянная команда» отметь нужные для конкретного диалога. /cmd вводить не нужно. Изменения библиотеки сохраняются сразу. Удаление убирает команду из всех чатов.');
+        commandManager = createCommandManager({ container: commands, library: quickCommands });
 
         const endpoints = section('Обработчики', 'Адреса и токены сохраняются в Tampermonkey. При переносе они подхватятся из старых скриптов.');
         for (const [id, title] of [['summary', 'Пересказ через OpenAI'], ['tts', 'Озвучка Inworld']]) {

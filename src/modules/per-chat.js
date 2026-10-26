@@ -178,20 +178,20 @@ export default function init(runtime) {
         return readCommands()[id] || '';
     }
 
-    function saveCommand(conversationId, value) {
-        const id = normalizeConversationId(conversationId);
-        const command = normalizeCommand(value);
-        if (!id || !command) return false;
-
-        const commands = readCommands();
-        commands[id] = command;
-        try {
-            localStorage.setItem(COMMAND_STORAGE_KEY, JSON.stringify(commands));
-            return true;
-        } catch (error) {
-            console.warn('[Persistent Command] Не удалось сохранить команду.', error);
-            return false;
+    function getActiveCommands(conversationId) {
+        try { return runtime.quickCommands.active(conversationId); }
+        catch (error) {
+            console.warn('[Quick Commands] Не удалось прочитать быстрые команды.', error);
+            return [];
         }
+    }
+
+    function getCommandTexts(conversationId) {
+        return [getSavedCommand(conversationId), ...getActiveCommands(conversationId).map(command => command.text)].filter(Boolean);
+    }
+
+    function saveCommand(conversationId, value, selectedIds) {
+        runtime.quickCommands.saveChat(conversationId, selectedIds, value, localStorage);
     }
 
     function deleteCommand(conversationId) {
@@ -243,7 +243,7 @@ export default function init(runtime) {
             const conversationId = normalizeConversationId(payload?.conversation_id);
             const savedLimit = getSavedLimit(conversationId);
             const savedModel = getSavedModel(conversationId);
-            const savedCommand = getSavedCommand(conversationId);
+            const commandTexts = getCommandTexts(conversationId);
             let changed = false;
 
             if (
@@ -266,8 +266,8 @@ export default function init(runtime) {
                 changed = true;
             }
 
-            if (savedCommand && typeof payload.message === 'string' && payload.message.trim()) {
-                const commandSuffix = `/cmd ${savedCommand}`;
+            if (commandTexts.length && typeof payload.message === 'string' && payload.message.trim()) {
+                const commandSuffix = commandTexts.map(text => `/cmd ${text}`).join('\n\n');
                 const originalMessage = payload.message.trimEnd();
                 if (!originalMessage.endsWith(commandSuffix)) {
                     payload.message = `${originalMessage}\n\n${commandSuffix}`;
@@ -560,6 +560,13 @@ export default function init(runtime) {
                 white-space: nowrap !important;
             }
 
+            #${COMMAND_POPUP_ID} { max-height: calc(100dvh - 24px) !important; overflow-y: auto !important; }
+            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks { margin: 14px 0 0 !important; padding: 0 !important; border: 0 !important; max-height: 200px; overflow-y: auto; }
+            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks legend { margin-bottom: 8px; color: #ddd; font-size: 13px; font-weight: 600; }
+            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks label { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; }
+            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks input { margin: 3px 0 0; accent-color: #a395f7; flex-shrink: 0; }
+            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks p { color: #bbb; font-size: 12px; }
+
             #${COMMAND_POPUP_ID} .tm-sc-persistent-command-input {
                 box-sizing: border-box !important;
                 width: 100% !important;
@@ -701,7 +708,8 @@ export default function init(runtime) {
         const savedCommand = context ? getSavedCommand(context.conversationId) : '';
         const value = item.querySelector('.tm-sc-response-length-menu-value');
         if (!value) return;
-        value.textContent = savedCommand || 'Для этого чата не задана';
+        const names = context ? getActiveCommands(context.conversationId).map(command => command.name) : [];
+        value.textContent = [savedCommand, ...names].filter(Boolean).join(' · ') || 'Для этого чата не задана';
     }
 
     function updateAllMenuItems() {
@@ -916,7 +924,7 @@ export default function init(runtime) {
         title.textContent = 'Постоянная команда';
         const caption = document.createElement('p');
         caption.className = 'tm-sc-persistent-command-caption';
-        caption.textContent = 'Будет дописываться к каждому твоему сообщению. /cmd вводить не нужно.';
+        caption.textContent = 'Ручная и каждая отмеченная команда добавляются отдельно к каждому твоему сообщению. /cmd вводить не нужно.';
 
         const error = document.createElement('p');
         error.className = 'tm-sc-persistent-command-error';
@@ -927,12 +935,15 @@ export default function init(runtime) {
         input.placeholder = 'Например: пиши коротко и не описывай действия за моего персонажа';
         input.setAttribute('aria-label', 'Текст постоянной команды');
 
+        const checks = document.createElement('fieldset');
+        checks.className = 'tm-sc-quick-command-checks';
+
         const actions = document.createElement('div');
         actions.className = 'tm-sc-persistent-command-actions';
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'tm-sc-persistent-command-delete';
-        remove.textContent = 'Удалить';
+        remove.textContent = 'Удалить ручную';
         const save = document.createElement('button');
         save.type = 'button';
         save.className = 'tm-sc-persistent-command-save';
@@ -941,7 +952,7 @@ export default function init(runtime) {
 
         const updateButtons = () => {
             const hasConversation = Boolean(commandPopup.dataset.conversationId);
-            save.disabled = !hasConversation || !normalizeCommand(input.value);
+            save.disabled = !hasConversation;
             remove.disabled = !hasConversation || !getSavedCommand(
                 commandPopup.dataset.conversationId || '',
             );
@@ -952,9 +963,11 @@ export default function init(runtime) {
         });
         save.addEventListener('click', () => {
             const conversationId = commandPopup.dataset.conversationId || '';
-            if (!saveCommand(conversationId, input.value)) {
+            const selectedIds = [...checks.querySelectorAll('input:checked')].map(node => node.value);
+            try { saveCommand(conversationId, input.value, selectedIds); }
+            catch (cause) {
                 error.hidden = false;
-                error.textContent = 'Введи текст команды.';
+                error.textContent = cause.message || 'Не удалось сохранить команды.';
                 updateButtons();
                 return;
             }
@@ -973,7 +986,7 @@ export default function init(runtime) {
             closeCommandPopup();
         });
 
-        commandPopup.append(title, caption, error, input, actions);
+        commandPopup.append(title, caption, error, input, checks, actions);
         commandPopup.updateButtons = updateButtons;
         document.body.appendChild(commandPopup);
         return commandPopup;
@@ -1056,6 +1069,29 @@ export default function init(runtime) {
         commandPopup.style.top = `${Math.max(margin, top)}px`;
     }
 
+    function renderCommandChecks(selectedIds) {
+        if (!commandPopup) return;
+        const list = commandPopup.querySelector('.tm-sc-quick-command-checks');
+        const chosen = new Set(selectedIds);
+        list.replaceChildren();
+        const legend = document.createElement('legend'); legend.textContent = 'Быстрые команды'; list.append(legend);
+        try {
+            const commands = runtime.quickCommands.list();
+            for (const command of commands) {
+                const label = document.createElement('label');
+                const check = document.createElement('input');
+                check.type = 'checkbox'; check.value = command.id; check.checked = chosen.has(command.id);
+                check.disabled = !commandPopup.dataset.conversationId;
+                label.append(check, document.createTextNode(command.name)); list.append(label);
+            }
+            if (!commands.length) {
+                const empty = document.createElement('p'); empty.textContent = 'Добавь команды в SC Tools → Быстрые команды.'; list.append(empty);
+            }
+        } catch (error) {
+            const warning = document.createElement('p'); warning.textContent = error.message; list.append(warning);
+        }
+    }
+
     function openCommandPopup(anchor) {
         closePopup();
         const panel = createCommandPopup();
@@ -1065,6 +1101,9 @@ export default function init(runtime) {
         const error = panel.querySelector('.tm-sc-persistent-command-error');
 
         panel.dataset.conversationId = context?.conversationId || '';
+        let selectedIds = [];
+        try { selectedIds = runtime.quickCommands.selectedIds(context?.conversationId || ''); } catch { /* The checklist displays the storage error. */ }
+        renderCommandChecks(selectedIds);
         input.value = savedCommand;
         error.hidden = Boolean(context?.conversationId);
         error.textContent = context?.conversationId
@@ -1196,6 +1235,14 @@ export default function init(runtime) {
         scheduleEnsureMenuItems();
     }
 
+    runtime.quickCommands.subscribe(() => {
+        updateAllMenuItems();
+        if (commandPopup && !commandPopup.hidden) {
+            const ids = [...commandPopup.querySelectorAll('.tm-sc-quick-command-checks input:checked')].map(node => node.value);
+            renderCommandChecks(ids);
+            window.requestAnimationFrame(positionCommandPopup);
+        }
+    });
     installNetworkOverride();
     runtime.onDomReady(startUi);
     runtime.dom?.subscribe(scheduleEnsureMenuItems);

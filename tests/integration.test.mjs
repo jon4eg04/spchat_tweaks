@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { createQuickCommands } from '../src/core/quick-commands.js';
+import { memory } from './fixtures.mjs';
 import { QUICK_MODELS } from '../src/core/models.js';
 
 test('per-chat module still overrides the page fetch and XHR after gaining a userscript sandbox', async () => {
@@ -23,12 +25,12 @@ test('per-chat module still overrides the page fetch and XHR after gaining a use
     ]);
     const sandboxWindow = { fetch: untouchedSandboxFetch };
     const sandbox = {
-        window: sandboxWindow, unsafeWindow: page, URL, Symbol, console, QUICK_MODELS,
+        window: sandboxWindow, unsafeWindow: page, URL, Symbol, console, QUICK_MODELS, quickCommands: createQuickCommands(memory()),
         location: { origin: 'https://spicychat.ai', pathname: '/chat/bot/conversation' },
         localStorage: { getItem: key => storage.get(key) ?? null },
         document: { readyState: 'loading', addEventListener() {} },
     };
-    vm.runInNewContext(source.replace('export default ', '') + '\ninit({ models: QUICK_MODELS, onDomReady() {} });', sandbox);
+    vm.runInNewContext(source.replace('export default ', '') + '\ninit({ quickCommands, models: QUICK_MODELS, onDomReady() {} });', sandbox);
     assert.equal(sandboxWindow.fetch, untouchedSandboxFetch);
     const body = JSON.stringify({ conversation_id: 'conversation', inference_settings: { max_new_tokens: 100 }, inference_model: 'old', message: 'Hello' });
     await page.fetch('https://prod.nd-api.com/chat', { method: 'POST', body });
@@ -63,7 +65,7 @@ test('only the legacy hider runs on additional SpicyChat subdomains', async () =
         FEATURE_INITIALIZERS: Object.fromEntries(catalog.map(module => [module.id, () => calls.push(module.id)])),
         createStore: () => ({ settings: { active: true, modules: Object.fromEntries(catalog.map(module => [module.id, true])) } }),
         createInterface: () => ({ start() {}, open() {} }),
-        createDomAdapters: () => ({}), createNativeModelAdapter: () => ({}),
+        createDomAdapters: () => ({}), createNativeModelAdapter: () => ({}), createQuickCommands: () => ({}),
         QUICK_MODELS, onDomReady: callback => callback(),
         location: { hostname: 'other.spicychat.ai' }, localStorage: {},
         document: { readyState: 'complete' }, GM_registerMenuCommand() {}, console,
@@ -80,10 +82,45 @@ test('a settings-window error cannot prevent composer features from starting', a
         FEATURE_INITIALIZERS: Object.fromEntries(catalog.map(module => [module.id, () => calls.push(module.id)])),
         createStore: () => ({ settings: { active: true, modules: Object.fromEntries(catalog.map(module => [module.id, true])) } }),
         createInterface: () => ({ start() { throw new Error('settings fixture failure'); }, open() {} }),
-        createDomAdapters: () => ({}), createNativeModelAdapter: () => ({}),
+        createDomAdapters: () => ({}), createNativeModelAdapter: () => ({}), createQuickCommands: () => ({}),
         QUICK_MODELS, onDomReady: callback => callback(),
         location: { hostname: 'spicychat.ai' }, localStorage: {},
         document: { readyState: 'complete' }, GM_registerMenuCommand() {}, console: { error() {} },
     });
     assert.deepEqual(calls, ['emoji', 'buttons', 'saved-texts']);
+});
+
+test('each enabled quick command and manual command becomes a separate CMD in fetch and XHR; edits/deletes apply to the next request', async () => {
+    const source = await readFile(new URL('../src/modules/per-chat.js', import.meta.url), 'utf8');
+    const gm = memory(), local = memory();
+    const quickCommands = createQuickCommands(gm);
+    const first = quickCommands.upsert({ name: 'First name', text: 'First text' });
+    const second = quickCommands.upsert({ name: 'Second name', text: 'Second text' });
+    quickCommands.upsert({ name: 'Off name', text: 'Never send' });
+    quickCommands.saveChat('one', [second, first], 'Manual text', local);
+    const calls = [];
+    class XHR { open() {} send(body) { calls.push(JSON.parse(body)); } }
+    const page = { Object, fetch: async (_url, options) => { calls.push(JSON.parse(options.body)); return { ok: true }; }, XMLHttpRequest: XHR };
+    vm.runInNewContext(source.replace('export default ', '') + '\ninit({ quickCommands, models: QUICK_MODELS, onDomReady() {} });', {
+        window: {}, unsafeWindow: page, localStorage: local, quickCommands, QUICK_MODELS, URL, Symbol, console,
+        location: { origin: 'https://spicychat.ai', pathname: '/chat/bot/one' }, document: { querySelectorAll: () => [] },
+    });
+    const send = async (conversation_id, message) => page.fetch('https://prod.nd-api.com/chat', { method: 'POST', body: JSON.stringify({ conversation_id, message }) });
+    const expected = 'Hello\n\n/cmd Manual text\n\n/cmd First text\n\n/cmd Second text';
+    await send('one', 'Hello');
+    assert.equal(calls.at(-1).message, expected);
+    const xhr = new XHR(); xhr.open('POST', 'https://prod.nd-api.com/chat'); xhr.send(JSON.stringify({ conversation_id: 'one', message: 'Hello' }));
+    assert.equal(calls.at(-1).message, expected);
+    await send('one', expected);
+    assert.equal(calls.at(-1).message, expected, 'interceptor chaining must not append the suffix again');
+    await send('two', 'Hello'); assert.equal(calls.at(-1).message, 'Hello');
+    await send('one', ''); assert.equal(calls.at(-1).message, '');
+    quickCommands.upsert({ id: first, name: 'Renamed', text: 'Changed' });
+    quickCommands.remove(second);
+    await send('one', 'Hello');
+    assert.equal(calls.at(-1).message, 'Hello\n\n/cmd Manual text\n\n/cmd Changed');
+    quickCommands.saveChat('one', [first], '', local);
+    await send('one', 'Hello'); assert.equal(calls.at(-1).message, 'Hello\n\n/cmd Changed');
+    quickCommands.saveChat('one', [], '', local);
+    await send('one', 'Hello'); assert.equal(calls.at(-1).message, 'Hello');
 });

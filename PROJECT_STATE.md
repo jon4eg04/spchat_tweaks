@@ -6,7 +6,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Current implementation
 
-- Version 1.0.7. Public source and installation files in this repository.
+- Version 1.0.8. Public source and installation files in this repository.
 - User requested no personal-name attribution anywhere in published files. The author header is omitted, AGENTS.md forbids future personal-name attribution, and public-file checks reject author headers.
 - Added hide-models, based on the user's Hide selected model blocks v1.1: hides Qwen3 235B 2507 and Codex 24B, handles dynamically inserted paragraphs and text changes, and restores a hidden row if the site reuses it for another model. Independently toggled and enabled by default on upgrade.
 - The additional legacy hider is optional in ZIP migration. Original eleven-script backups are still complete; no repeated import is needed for already-migrated users.
@@ -42,7 +42,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Next steps
 
-The user updates the combined script to 1.0.7 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Verify native MiMo selection in the real account; local/browser CI uses synthetic site handlers.
+The user updates the combined script to 1.0.8 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Verify native MiMo selection in the real account; local/browser CI uses synthetic site handlers.
 
 ## Full original-source audit (1.0.5)
 
@@ -74,3 +74,12 @@ The user updates the combined script to 1.0.7 and reloads SpicyChat. No repeated
 - Full Chromium/Firefox checks remain mandatory. Real account execution is not available in this environment; the adapter contract is taken directly from the user's runtime diagnostics.
 
 - Release CI infrastructure: a run spent nine minutes downloading Ubuntu packages from the runner's azure.archive mirror before cancellation. Browser package installation and browser/OS dependency installation are separate bounded steps; the ephemeral runner uses the primary Ubuntu archive mirror. All Node, public-file and both browser checks still gate dist publication.
+
+## Quick command library (1.0.8)
+
+- User requested named reusable commands maintained in SC Tools and checkboxes in the existing plus-menu CMD popup, alongside the original manual text. They explicitly corrected the initial proposal: each checked command and the manual command are SEPARATE /cmd instructions in the outgoing message, never one combined CMD block.
+- src/core/quick-commands.js owns a single GM record spchat-tweaks:quick-commands:v1: schema, commands [{id,name,text}], selections by conversation ID. Fresh reads apply library edits to the next request. Edits preserve IDs; deletion removes all references. Names are local labels, never appended to a message. A leading /cmd is normalized from entered text; outgoing prefix is added once per instruction.
+- src/core/command-manager.js renders the shared CRUD editor in SC Tools. The chat popup renders only names/checkboxes and the legacy manual field. Save applies both to that chat; Escape/outside click discards drafts. Empty manual plus no checks disables all instructions; Delete manual leaves preset selections active. New library starts empty.
+- Manual data stays in the original localStorage key. Saving manual text and GM choices rolls back both resources on failure, including partially written values. No existing module data is moved or deleted. Library corruption refuses writes/import and does not erase data. The network path preserves the existing manual command if the new library cannot be read.
+- JSON suite backup schema remains 1 and includes the new allowlisted GM key, with strict validation on import and normal skip-existing/overwrite semantics. A same-named page-local key is excluded. No library text, selection, handler address or credentials are published in the repo.
+- Tests: six command-library/storage/import unit scenarios plus request interception with independent CMDs through fetch/XHR. Browser scenarios cover actual CRUD UI, literal text labels, draft save/Escape, multiple selections, per-chat isolation, edit/delete while selected, manual deletion, all-disabled state, backup export and 520px layout. Full suite checks still include all original modules and native MiMo selection in Chromium/Firefox. No live authenticated backend calls.

@@ -1,3 +1,4 @@
+import { QUICK_COMMANDS_KEY, validateQuickCommands } from './quick-commands.js';
 import { SETTINGS_KEY, MIGRATION_KEY } from './settings.js';
 
 const forbidden = new Set(['__proto__', 'constructor', 'prototype']);
@@ -72,7 +73,7 @@ export function planLegacyImport(files, catalog, localStorage) {
                 if (!allowedStorageKey(key, module)) continue;
                 const value = decodeStorageValue(raw);
                 if (!value || typeof value !== 'object') throw new Error('Данные модуля имеют неожиданный формат. Импорт остановлен.');
-                plan.values[key] = value;
+                plan.values[key] = key === QUICK_COMMANDS_KEY ? validateQuickCommands(value) : value;
                 keys++;
             }
         } else if (module.storageKeys.length && !['emoji', 'per-chat'].includes(module.id)) {
@@ -81,7 +82,7 @@ export function planLegacyImport(files, catalog, localStorage) {
         let localKeys = 0;
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
-            if (!allowedStorageKey(key, module)) continue;
+            if (key === QUICK_COMMANDS_KEY || !allowedStorageKey(key, module)) continue;
             const raw = localStorage.getItem(key);
             if (raw === null) continue;
             const value = JSON.parse(raw);
@@ -116,10 +117,10 @@ export function planSuiteImport(raw, catalog) {
         let localKeys = 0;
         for (const [key, value] of Object.entries(raw.values)) if (allowedStorageKey(key, module)) {
             if (!value || typeof value !== 'object') throw new Error('Некорректное значение в резервной копии.');
-            plan.values[key] = value;
+            plan.values[key] = key === QUICK_COMMANDS_KEY ? validateQuickCommands(value) : value;
             keys++;
         }
-        for (const [key, value] of Object.entries(raw.local)) if (allowedStorageKey(key, module)) {
+        for (const [key, value] of Object.entries(raw.local)) if (key !== QUICK_COMMANDS_KEY && allowedStorageKey(key, module)) {
             if (typeof value !== 'string') throw new Error('Некорректные локальные данные в резервной копии.');
             const decoded = JSON.parse(value);
             if (!decoded || typeof decoded !== 'object') throw new Error('Некорректные локальные данные.');
@@ -188,7 +189,7 @@ export function exportSuite(store, catalog, localStorage) {
     for (const key of store.gm.list()) if (catalog.some(module => allowedStorageKey(key, module))) values[key] = store.gm.get(key);
     for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (catalog.some(module => allowedStorageKey(key, module))) local[key] = localStorage.getItem(key);
+        if (key !== QUICK_COMMANDS_KEY && catalog.some(module => allowedStorageKey(key, module))) local[key] = localStorage.getItem(key);
     }
     return { format: 'spchat-tweaks-backup', schema: 1, exportedAt: new Date().toISOString(), settings: store.settings, values, local };
 }

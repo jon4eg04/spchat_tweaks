@@ -9,7 +9,8 @@
     "storageKeys": [
       "tm-sc-per-chat-response-length-v1",
       "tm-sc-per-chat-inference-model-v1",
-      "tm-sc-per-chat-persistent-command-v1"
+      "tm-sc-per-chat-persistent-command-v1",
+      "spchat-tweaks:quick-commands:v1"
     ]
   },
   {
