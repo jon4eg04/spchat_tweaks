@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SpicyChat Tools
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
-// @version      1.0.8
+// @version      1.0.9
 // @description  Единый комплект из 12 функций SpicyChat с локальными настройками и переносом старых данных.
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
@@ -26,7 +26,7 @@
 (function () {
 'use strict';
 
-const SUITE_VERSION = "1.0.8";
+const SUITE_VERSION = "1.0.9";
 
 const MODULE_CATALOG = [
   {
@@ -375,6 +375,20 @@ function createQuickCommands(gm) {
     return {
         list: () => read().commands,
         selectedIds: conversation => selected(read(), conversation),
+        snapshot(conversation) {
+            const data = read();
+            return { commands: data.commands, selectedIds: selected(data, conversation) };
+        },
+        setSelectedIds(conversation, ids) {
+            if (typeof conversation !== 'string' || !conversation.trim()) throw new Error('Открой конкретный сохранённый диалог.');
+            if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) throw new Error('Не удалось прочитать выбранные команды.');
+            const data = read();
+            const known = new Set(data.commands.map(command => command.id));
+            const chosen = [...new Set(ids)].filter(id => known.has(id));
+            if (chosen.length) data.selections[conversation] = chosen;
+            else delete data.selections[conversation];
+            write(data);
+        },
         active(conversation) {
             const data = read();
             const ids = new Set(selected(data, conversation));
@@ -1290,6 +1304,167 @@ function createNativeModelAdapter() {
 }
 
 
+// ---- src/core/chat-panel.js ----
+
+// Always-available per-conversation controls; persistence stays in the feature.
+function createChatPanel({ getContext, read, save, models, minTokens, maxTokens, tokenStep, initialTokens, shadowMode = 'closed' }) {
+    const host = document.createElement('div'); host.id = 'spchat-chat-panel';
+    const root = host.attachShadow({ mode: shadowMode });
+    const style = document.createElement('style');
+    style.textContent = `
+        :host { all: initial; position: fixed; right: 18px; top: 72px; z-index: 90; width: min(290px, calc(100vw - 24px)); color-scheme: dark; font: 13px/1.45 system-ui, sans-serif; color: #f1f1f6; }
+        :host([hidden]), [hidden] { display: none !important; }
+        * { box-sizing: border-box; }
+        details.panel { background: #22242ef2; border: 1px solid #484a5b; border-radius: 12px; box-shadow: 0 8px 28px #0005; max-height: calc(100dvh - 90px); overflow-y: auto; }
+        summary { cursor: pointer; }
+        .heading { padding: 12px 32px 12px 14px; position: relative; list-style: none; font-weight: 650; }
+        .heading::-webkit-details-marker { display: none; }
+        .heading::after { content: '▾'; position: absolute; right: 14px; top: 12px; }
+        .panel:not([open]) > .heading::after { content: '▸'; }
+        .compact { display: block; color: #c5c5d5; font-size: 11px; font-weight: 400; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .panel[open] > .heading .compact { display: none; }
+        .body { padding: 0 14px 12px; }
+        .field { display: block; margin: 0 0 12px; }
+        .label { display: block; color: #c5c5d5; margin-bottom: 5px; }
+        select, textarea, button, input { font: inherit; }
+        select, textarea { width: 100%; color: #f4f4fa; background: #151720; border: 1px solid #505467; border-radius: 7px; padding: 8px; }
+        select { cursor: pointer; }
+        textarea { margin-top: 8px; min-height: 90px; resize: vertical; }
+        input[type=range] { width: 100%; margin: 6px 0 0; accent-color: #a395f7; }
+        input[type=checkbox] { accent-color: #a395f7; flex-shrink: 0; margin: 3px 0 0; }
+        button { color: #d4ccff; cursor: pointer; background: transparent; border: 0; padding: 0; font-size: 11px; text-decoration: underline; }
+        :focus-visible { outline: 2px solid #b7a9ff; outline-offset: 2px; }
+        .token-head { display: flex; justify-content: space-between; gap: 10px; }
+        .token-head .label { margin: 0; }
+        fieldset { min-inline-size: 0; margin: 0; padding: 0; border: 0; }
+        legend { color: #c5c5d5; margin-bottom: 5px; }
+        .commands { max-height: 180px; overflow-y: auto; }
+        .command { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; overflow-wrap: anywhere; cursor: pointer; }
+        .empty, .hint { color: #a7a8bb; font-size: 11px; margin: 6px 0; }
+        .manual { margin-top: 10px; }
+        .manual > summary { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #d4ccff; }
+        .error { color: #ffb6ab; font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
+        @media(max-width: 540px) { :host { right: 12px; top: 64px; width: min(280px, calc(100vw - 24px)); } details.panel { max-height: calc(100dvh - 80px); } }
+    `;
+    for (const type of ['keydown', 'keyup', 'keypress']) root.addEventListener(type, event => event.stopPropagation());
+    const panel = document.createElement('details'); panel.className = 'panel'; panel.open = true;
+    const heading = document.createElement('summary'); heading.className = 'heading';
+    heading.append(document.createTextNode('Настройки чата'));
+    const compactSettings = document.createElement('span'); compactSettings.className = 'compact';
+    const compactCommands = document.createElement('span'); compactCommands.className = 'compact';
+    const compactManual = document.createElement('span'); compactManual.className = 'compact';
+    heading.append(compactSettings, compactCommands, compactManual);
+    const body = document.createElement('div'); body.className = 'body';
+    const modelLabel = document.createElement('label'); modelLabel.className = 'field';
+    const modelCaption = document.createElement('span'); modelCaption.className = 'label'; modelCaption.textContent = 'Модель для чата';
+    const model = document.createElement('select'); model.className = 'tm-sc-response-model-select'; model.setAttribute('aria-label', 'Модель для этого диалога');
+    for (const item of models) { const option = document.createElement('option'); option.value = item.id; option.textContent = item.label; model.append(option); }
+    modelLabel.append(modelCaption, model);
+    const tokenLabel = document.createElement('div'); tokenLabel.className = 'field';
+    const tokenHead = document.createElement('span'); tokenHead.className = 'token-head';
+    const tokenCaption = document.createElement('span'); tokenCaption.className = 'label';
+    const siteTokens = document.createElement('button'); siteTokens.type = 'button'; siteTokens.textContent = 'Как на сайте';
+    const range = document.createElement('input'); range.type = 'range'; range.min = String(minTokens); range.max = String(maxTokens); range.step = String(tokenStep);
+    range.className = 'tm-sc-response-length-slider'; range.setAttribute('aria-label', 'Токенов на ответ');
+    tokenHead.append(tokenCaption, siteTokens); tokenLabel.append(tokenHead, range);
+    const commandsField = document.createElement('fieldset');
+    const legend = document.createElement('legend'); legend.textContent = 'Быстрые команды';
+    const commands = document.createElement('div'); commands.className = 'commands';
+    const empty = document.createElement('p'); empty.className = 'empty'; empty.textContent = 'Добавь команды в SC Tools → Быстрые команды.';
+    commandsField.append(legend, commands, empty);
+    const manualDetails = document.createElement('details'); manualDetails.className = 'manual';
+    const manualCaption = document.createElement('summary');
+    const manual = document.createElement('textarea'); manual.className = 'tm-sc-persistent-command-input'; manual.setAttribute('aria-label', 'Текст постоянной команды'); manual.placeholder = 'Ручная команда без /cmd';
+    manualDetails.append(manualCaption, manual);
+    const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = 'Сохраняется сразу · каждая команда — отдельная /cmd';
+    const status = document.createElement('div'); status.className = 'error'; status.setAttribute('role', 'status');
+    body.append(modelLabel, tokenLabel, commandsField, manualDetails, hint, status); panel.append(heading, body); root.append(style, panel);
+
+    let conversation = '';
+    let signature = '';
+    const rows = new Map();
+    const errors = new Map();
+    const preview = value => value.replace(/\s+/g, ' ').trim() || 'не задана';
+    const showErrors = () => { const text = [...errors.values()].join(' '); if (status.textContent !== text) status.textContent = text; };
+
+    function refresh() {
+        if (!host.isConnected && document.body) document.body.append(host);
+        const current = getContext()?.conversationId || '';
+        host.hidden = !current;
+        if (!current) { conversation = ''; signature = ''; delete host.dataset.scConversation; return; }
+        const changedChat = current !== conversation;
+        try {
+            const state = read(current);
+            if (errors.delete('read')) { signature = ''; showErrors(); }
+            for (const control of [model, range, manual, siteTokens]) control.disabled = false;
+            const nextSignature = JSON.stringify(state);
+            if (!changedChat && nextSignature === signature) return;
+            conversation = current; host.dataset.scConversation = current; signature = nextSignature;
+            if (changedChat) { errors.clear(); showErrors(); manualDetails.open = false; }
+            const legacy = model.querySelector('[data-legacy-model]');
+            if (state.model === 'glm45' && !legacy) {
+                const option = document.createElement('option'); option.value = 'glm45'; option.textContent = 'Glam 4.6 (сохранено ранее)'; option.dataset.legacyModel = ''; model.append(option);
+            } else if (state.model !== 'glm45') legacy?.remove();
+            model.value = state.model;
+            range.value = String(state.limit ?? initialTokens);
+            tokenCaption.textContent = state.limit === null ? 'Ответ: токены сайта' : `Ответ: ${state.limit} токенов`;
+            siteTokens.hidden = state.limit === null;
+            if (changedChat || (!errors.has('manual') && root.activeElement !== manual)) manual.value = state.manual;
+            manualCaption.textContent = `Ручная: ${preview(state.manual)}`; manualCaption.title = state.manual;
+            const selected = new Set(state.selectedIds);
+            const present = new Set(state.commands.map(item => item.id));
+            for (const [id, row] of rows) if (!present.has(id)) { row.label.remove(); rows.delete(id); }
+            for (const [index, item] of state.commands.entries()) {
+                let row = rows.get(item.id);
+                if (!row) {
+                    const label = document.createElement('label'); label.className = 'command';
+                    const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.value = item.id;
+                    const name = document.createTextNode(''); label.append(checkbox, name);
+                    row = { label, checkbox, name }; rows.set(item.id, row);
+                    checkbox.addEventListener('change', () => commit('commands', id => {
+                        const ids = [...commands.querySelectorAll('input:checked')].map(input => input.value);
+                        save.commands(id, ids);
+                    }));
+                }
+                row.name.textContent = item.name; row.checkbox.checked = selected.has(item.id); row.checkbox.disabled = false;
+                if (commands.children[index] !== row.label) commands.insertBefore(row.label, commands.children[index] || null);
+            }
+            empty.hidden = state.commands.length > 0;
+            compactSettings.textContent = `${model.selectedOptions[0]?.textContent || 'Модель сайта'} · ${state.limit === null ? 'токены сайта' : state.limit + ' токенов'}`;
+            compactCommands.textContent = 'Команды: ' + (state.commands.filter(item => selected.has(item.id)).map(item => item.name).join(', ') || 'не выбраны');
+            compactManual.textContent = `Ручная: ${preview(state.manual)}`;
+        } catch (error) {
+            for (const control of [model, range, manual, siteTokens, ...commands.querySelectorAll('input')]) control.disabled = true;
+            if (changedChat) { model.value = ''; manual.value = ''; commands.replaceChildren(); rows.clear(); manualCaption.textContent = 'Ручная: недоступна'; compactSettings.textContent = 'Не удалось прочитать настройки'; compactCommands.textContent = ''; compactManual.textContent = ''; }
+            errors.set('read', error.message || 'Не удалось прочитать настройки чата.'); showErrors();
+        }
+    }
+
+    function commit(field, action) {
+        const current = getContext()?.conversationId || '';
+        // A SPA navigation may precede its first DOM mutation. Never save an old
+        // control's value into the newly opened conversation.
+        if (!current || current !== conversation) { signature = ''; refresh(); return; }
+        try { action(current); errors.delete(field); }
+        catch (error) { errors.set(field, error.message || 'Не удалось сохранить настройку.'); }
+        signature = ''; refresh(); showErrors();
+    }
+    model.addEventListener('change', () => commit('model', id => save.model(id, model.value)));
+    range.addEventListener('input', () => commit('tokens', id => save.limit(id, Number(range.value))));
+    range.addEventListener('pointerup', () => commit('tokens', id => save.limit(id, Number(range.value))));
+    siteTokens.addEventListener('click', event => { event.preventDefault(); commit('tokens', id => save.limit(id, null)); });
+    manual.addEventListener('input', () => commit('manual', id => save.manual(id, manual.value)));
+    window.addEventListener('storage', () => { signature = ''; refresh(); });
+    window.addEventListener('popstate', refresh);
+    window.addEventListener('pageshow', refresh);
+    // Covers pushState/replaceState and GM changes from other open tabs without
+    // wrapping the site's history methods or exposing suite state to the page.
+    window.setInterval(refresh, 500);
+    refresh();
+    return { refresh };
+}
+
+
 // ---- src/modules/per-chat.js ----
 
 // Feature source; bundled by scripts/build.mjs. No userscript metadata here.
@@ -1306,17 +1481,6 @@ function init_per_chat(runtime) {
     const STORAGE_KEY = 'tm-sc-per-chat-response-length-v1';
     const MODEL_STORAGE_KEY = 'tm-sc-per-chat-inference-model-v1';
     const COMMAND_STORAGE_KEY = 'tm-sc-per-chat-persistent-command-v1';
-    const STYLE_ID = 'tm-sc-per-chat-response-length-style';
-    const POPUP_ID = 'tm-sc-response-length-popup';
-    const COMMAND_POPUP_ID = 'tm-sc-persistent-command-popup';
-    const MENU_ITEM_CLASS = 'tm-sc-response-length-menu-item';
-    const COMMAND_MENU_ITEM_CLASS = 'tm-sc-persistent-command-menu-item';
-    const PLUS_BUTTON_SELECTOR = 'button[aria-label="Plus-button"], button[aria-label="Plus button"]';
-    const NATIVE_MENU_ITEM_SELECTOR = [
-        'button[aria-label="Generate Image"]',
-        'button[aria-label="Web Search"]',
-        'button[aria-label="Command (OOC)"]',
-    ].join(', ');
     const GENERATION_PATH = '/chat';
     const MIN_TOKENS = 100;
     const MAX_TOKENS = 500;
@@ -1330,16 +1494,6 @@ function init_per_chat(runtime) {
         [...INFERENCE_MODELS.map(({ id }) => id).filter(Boolean), 'glm45'], // Retain earlier saved overrides.
     );
     const XHR_META = Symbol('tmScResponseLengthRequest');
-
-    let popup = null;
-    let popupAnchor = null;
-    let commandPopup = null;
-    let commandPopupAnchor = null;
-    let rootObserver = null;
-    let ensureScheduled = false;
-    let observerRetryTimer = null;
-    let observerRetryDelay = 250;
-    let uiStarted = false;
 
     function normalizeConversationId(value) {
         return typeof value === 'string' ? value.trim() : '';
@@ -1377,11 +1531,12 @@ function init_per_chat(runtime) {
 
     function saveLimit(conversationId, value) {
         const id = normalizeConversationId(conversationId);
-        const limit = normalizeTokenLimit(value);
-        if (!id || limit === null) return false;
+        const limit = value === null ? null : normalizeTokenLimit(value);
+        if (!id || (value !== null && limit === null)) return false;
 
         const settings = readSettings();
-        settings[id] = limit;
+        if (limit === null) delete settings[id];
+        else settings[id] = limit;
         try {
             localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
             return true;
@@ -1438,12 +1593,6 @@ function init_per_chat(runtime) {
         }
     }
 
-    function getModelLabel(modelId) {
-        if (modelId === 'glm45') return 'Glam 4.6 (сохранено ранее)';
-        return INFERENCE_MODELS.find(({ id }) => id === modelId)?.label
-            || INFERENCE_MODELS[0].label;
-    }
-
     function normalizeCommand(value) {
         if (typeof value !== 'string') return '';
         return value.trim().replace(/^\/cmd(?:\s+|$)/i, '').trim();
@@ -1484,23 +1633,17 @@ function init_per_chat(runtime) {
         return [getSavedCommand(conversationId), ...getActiveCommands(conversationId).map(command => command.text)].filter(Boolean);
     }
 
-    function saveCommand(conversationId, value, selectedIds) {
-        runtime.quickCommands.saveChat(conversationId, selectedIds, value, localStorage);
-    }
-
-    function deleteCommand(conversationId) {
+    function saveManualCommand(conversationId, value) {
         const id = normalizeConversationId(conversationId);
-        if (!id) return false;
-
-        const commands = readCommands();
-        delete commands[id];
-        try {
-            localStorage.setItem(COMMAND_STORAGE_KEY, JSON.stringify(commands));
-            return true;
-        } catch (error) {
-            console.warn('[Persistent Command] Не удалось удалить команду.', error);
-            return false;
-        }
+        if (!id) throw new Error('Открой конкретный сохранённый диалог.');
+        let commands;
+        try { commands = JSON.parse(localStorage.getItem(COMMAND_STORAGE_KEY) || '{}'); }
+        catch { throw new Error('Не удалось прочитать ручные команды. Данные не изменены.'); }
+        if (!commands || typeof commands !== 'object' || Array.isArray(commands)) throw new Error('Не удалось прочитать ручные команды. Данные не изменены.');
+        const text = normalizeCommand(value);
+        if (text) Object.defineProperty(commands, id, { value: text, enumerable: true, writable: true, configurable: true });
+        else delete commands[id];
+        localStorage.setItem(COMMAND_STORAGE_KEY, JSON.stringify(commands));
     }
 
     function getCurrentChatContext() {
@@ -1665,882 +1808,29 @@ function init_per_chat(runtime) {
         }
     }
 
-    function addStyles() {
-        if (document.getElementById(STYLE_ID)) return;
-        const style = document.createElement('style');
-        style.id = STYLE_ID;
-        style.textContent = `
-            #${POPUP_ID}[hidden],
-            #${COMMAND_POPUP_ID}[hidden] {
-                display: none !important;
-            }
-
-            #${POPUP_ID},
-            #${COMMAND_POPUP_ID} {
-                position: fixed !important;
-                z-index: 2147483646 !important;
-                box-sizing: border-box !important;
-                width: min(340px, calc(100vw - 24px)) !important;
-                padding: 18px !important;
-                color: #ffffff !important;
-                background: #292929 !important;
-                border: 1px solid rgba(255, 255, 255, 0.14) !important;
-                border-radius: 14px !important;
-                box-shadow: 0 14px 45px rgba(0, 0, 0, 0.48) !important;
-                font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-length-title,
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-title {
-                margin: 0 !important;
-                color: #ffffff !important;
-                font-size: 18px !important;
-                font-weight: 700 !important;
-                line-height: 1.25 !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-length-caption,
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-caption {
-                margin: 5px 0 16px !important;
-                color: rgba(255, 255, 255, 0.62) !important;
-                font-size: 13px !important;
-                line-height: 1.35 !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-length-value-row {
-                display: flex !important;
-                align-items: baseline !important;
-                justify-content: space-between !important;
-                gap: 12px !important;
-                margin-bottom: 9px !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-length-value-label {
-                color: rgba(255, 255, 255, 0.76) !important;
-                font-size: 14px !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-length-value {
-                min-width: 54px !important;
-                color: #ffffff !important;
-                font-size: 20px !important;
-                font-weight: 700 !important;
-                text-align: right !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-length-slider {
-                appearance: auto !important;
-                box-sizing: border-box !important;
-                width: 100% !important;
-                margin: 2px 0 5px !important;
-                accent-color: #258cf4 !important;
-                cursor: pointer !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-length-scale {
-                display: flex !important;
-                justify-content: space-between !important;
-                margin-bottom: 16px !important;
-                color: rgba(255, 255, 255, 0.48) !important;
-                font-size: 12px !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-model-field {
-                margin-bottom: 17px !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-model-label {
-                display: block !important;
-                margin-bottom: 7px !important;
-                color: rgba(255, 255, 255, 0.76) !important;
-                font-size: 14px !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-model-select {
-                appearance: auto !important;
-                box-sizing: border-box !important;
-                width: 100% !important;
-                min-height: 40px !important;
-                padding: 8px 10px !important;
-                color: #ffffff !important;
-                color-scheme: dark !important;
-                background: rgba(0, 0, 0, 0.24) !important;
-                border: 1px solid rgba(255, 255, 255, 0.18) !important;
-                border-radius: 9px !important;
-                outline: none !important;
-                font: inherit !important;
-                font-size: 14px !important;
-                cursor: pointer !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-model-select:focus {
-                border-color: #258cf4 !important;
-                box-shadow: 0 0 0 2px rgba(37, 140, 244, 0.2) !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-model-select option {
-                color: #ffffff !important;
-                background: #292929 !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-length-save {
-                appearance: none !important;
-                box-sizing: border-box !important;
-                width: 100% !important;
-                min-height: 40px !important;
-                padding: 9px 16px !important;
-                color: #ffffff !important;
-                background: #2869aa !important;
-                border: 0 !important;
-                border-radius: 9px !important;
-                cursor: pointer !important;
-                font: inherit !important;
-                font-size: 15px !important;
-                font-weight: 650 !important;
-                transition: background-color 120ms ease, opacity 120ms ease !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-length-save:hover {
-                background: #327bc4 !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-length-save:disabled {
-                opacity: 0.45 !important;
-                cursor: default !important;
-            }
-
-            #${POPUP_ID} .tm-sc-response-length-error,
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-error {
-                margin: 0 0 12px !important;
-                color: #ff9d9d !important;
-                font-size: 13px !important;
-                line-height: 1.35 !important;
-            }
-
-            .${MENU_ITEM_CLASS},
-            .${COMMAND_MENU_ITEM_CLASS} {
-                box-sizing: border-box !important;
-                width: 340px !important;
-                max-width: calc(100vw - 24px) !important;
-                overflow: hidden !important;
-            }
-
-            .${MENU_ITEM_CLASS} .tm-sc-response-length-menu-copy,
-            .${COMMAND_MENU_ITEM_CLASS} .tm-sc-response-length-menu-copy {
-                display: flex !important;
-                width: 0 !important;
-                min-width: 0 !important;
-                flex: 1 1 auto !important;
-                flex-direction: column !important;
-                align-items: flex-start !important;
-                gap: 1px !important;
-            }
-
-            .${MENU_ITEM_CLASS} .tm-sc-response-length-menu-title,
-            .${COMMAND_MENU_ITEM_CLASS} .tm-sc-response-length-menu-title {
-                color: inherit !important;
-                font: inherit !important;
-                line-height: 1.25 !important;
-            }
-
-            .${MENU_ITEM_CLASS} .tm-sc-response-length-menu-value,
-            .${COMMAND_MENU_ITEM_CLASS} .tm-sc-response-length-menu-value {
-                max-width: 100% !important;
-                overflow: hidden !important;
-                color: rgba(255, 255, 255, 0.58) !important;
-                font-size: 12px !important;
-                line-height: 1.25 !important;
-                text-overflow: ellipsis !important;
-                white-space: nowrap !important;
-            }
-
-            #${COMMAND_POPUP_ID} { max-height: calc(100dvh - 24px) !important; overflow-y: auto !important; }
-            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks { margin: 14px 0 0 !important; padding: 0 !important; border: 0 !important; max-height: 200px; overflow-y: auto; }
-            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks legend { margin-bottom: 8px; color: #ddd; font-size: 13px; font-weight: 600; }
-            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks label { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; }
-            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks input { margin: 3px 0 0; accent-color: #a395f7; flex-shrink: 0; }
-            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks p { color: #bbb; font-size: 12px; }
-
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-input {
-                box-sizing: border-box !important;
-                width: 100% !important;
-                min-height: 130px !important;
-                resize: vertical !important;
-                margin: 0 0 14px !important;
-                padding: 11px 12px !important;
-                color: #ffffff !important;
-                caret-color: #ffffff !important;
-                background: rgba(0, 0, 0, 0.24) !important;
-                border: 1px solid rgba(255, 255, 255, 0.18) !important;
-                border-radius: 9px !important;
-                outline: none !important;
-                font: inherit !important;
-                font-size: 14px !important;
-                line-height: 1.4 !important;
-            }
-
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-input:focus {
-                border-color: #258cf4 !important;
-                box-shadow: 0 0 0 2px rgba(37, 140, 244, 0.2) !important;
-            }
-
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-actions {
-                display: grid !important;
-                grid-template-columns: 1fr 1fr !important;
-                gap: 9px !important;
-            }
-
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-save,
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-delete {
-                appearance: none !important;
-                box-sizing: border-box !important;
-                min-height: 40px !important;
-                padding: 9px 12px !important;
-                color: #ffffff !important;
-                border: 0 !important;
-                border-radius: 9px !important;
-                cursor: pointer !important;
-                font: inherit !important;
-                font-size: 14px !important;
-                font-weight: 650 !important;
-                transition: background-color 120ms ease, opacity 120ms ease !important;
-            }
-
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-save {
-                background: #2869aa !important;
-            }
-
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-save:hover {
-                background: #327bc4 !important;
-            }
-
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-delete {
-                background: rgba(255, 255, 255, 0.1) !important;
-            }
-
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-delete:hover {
-                background: rgba(255, 90, 90, 0.2) !important;
-            }
-
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-save:disabled,
-            #${COMMAND_POPUP_ID} .tm-sc-persistent-command-delete:disabled {
-                opacity: 0.45 !important;
-                cursor: default !important;
-            }
-        `;
-        (document.head || document.documentElement).appendChild(style);
-    }
-
-    function createTokenIcon() {
-        const namespace = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(namespace, 'svg');
-        svg.setAttribute('width', '20');
-        svg.setAttribute('height', '20');
-        svg.setAttribute('viewBox', '0 0 24 24');
-        svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor');
-        svg.setAttribute('stroke-width', '2');
-        svg.setAttribute('stroke-linecap', 'round');
-        svg.setAttribute('stroke-linejoin', 'round');
-        svg.setAttribute('aria-hidden', 'true');
-        svg.classList.add('lucide', 'lucide-gauge', 'inline-flex', 'items-center', 'justify-center');
-
-        const path = document.createElementNS(namespace, 'path');
-        path.setAttribute('d', 'M12 14l4-4');
-        const arc = document.createElementNS(namespace, 'path');
-        arc.setAttribute('d', 'M3.34 19a10 10 0 1 1 17.32 0');
-        const base = document.createElementNS(namespace, 'path');
-        base.setAttribute('d', 'M5 19h14');
-        svg.append(path, arc, base);
-        return svg;
-    }
-
-    function createCommandIcon() {
-        const namespace = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(namespace, 'svg');
-        svg.setAttribute('width', '20');
-        svg.setAttribute('height', '20');
-        svg.setAttribute('viewBox', '0 0 24 24');
-        svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor');
-        svg.setAttribute('stroke-width', '2');
-        svg.setAttribute('stroke-linecap', 'round');
-        svg.setAttribute('stroke-linejoin', 'round');
-        svg.setAttribute('aria-hidden', 'true');
-        svg.classList.add('lucide', 'lucide-terminal-square', 'inline-flex', 'items-center', 'justify-center');
-
-        const frame = document.createElementNS(namespace, 'rect');
-        frame.setAttribute('x', '3');
-        frame.setAttribute('y', '3');
-        frame.setAttribute('width', '18');
-        frame.setAttribute('height', '18');
-        frame.setAttribute('rx', '2');
-        const chevron = document.createElementNS(namespace, 'path');
-        chevron.setAttribute('d', 'm7 8 4 4-4 4');
-        const line = document.createElementNS(namespace, 'path');
-        line.setAttribute('d', 'M13 16h4');
-        svg.append(frame, chevron, line);
-        return svg;
-    }
-
-    function updateMenuItem(item) {
-        const context = getCurrentChatContext();
-        const savedLimit = context ? getSavedLimit(context.conversationId) : null;
-        const savedModel = context ? getSavedModel(context.conversationId) : '';
-        const value = item.querySelector('.tm-sc-response-length-menu-value');
-        if (!value) return;
-        if (savedLimit === null && !savedModel) {
-            value.textContent = 'Для этого чата не задано';
-            return;
-        }
-        const tokenLabel = savedLimit === null ? 'токены сайта' : `${savedLimit} токенов`;
-        value.textContent = `${tokenLabel} · ${getModelLabel(savedModel)}`;
-    }
-
-    function updateCommandMenuItem(item) {
-        const context = getCurrentChatContext();
-        const savedCommand = context ? getSavedCommand(context.conversationId) : '';
-        const value = item.querySelector('.tm-sc-response-length-menu-value');
-        if (!value) return;
-        const names = context ? getActiveCommands(context.conversationId).map(command => command.name) : [];
-        value.textContent = [savedCommand, ...names].filter(Boolean).join(' · ') || 'Для этого чата не задана';
-    }
-
-    function updateAllMenuItems() {
-        for (const item of document.querySelectorAll(`.${MENU_ITEM_CLASS}`)) updateMenuItem(item);
-        for (const item of document.querySelectorAll(`.${COMMAND_MENU_ITEM_CLASS}`)) {
-            updateCommandMenuItem(item);
-        }
-    }
-
-    function findOpenPlusMenu(plusButton) {
-        return runtime.dom.plusMenu(plusButton);
-    }
-
-    function createMenuItem(referenceButton, plusButton) {
-        const item = document.createElement('button');
-        item.type = 'button';
-        item.className = `${referenceButton.className || ''} ${MENU_ITEM_CLASS}`.trim();
-        item.setAttribute('aria-label', 'Длина ответа и модель');
-        item.appendChild(createTokenIcon());
-
-        const copy = document.createElement('div');
-        copy.className = 'tm-sc-response-length-menu-copy';
-        const title = document.createElement('span');
-        title.className = 'tm-sc-response-length-menu-title';
-        title.textContent = 'Ответ и модель';
-        const value = document.createElement('span');
-        value.className = 'tm-sc-response-length-menu-value';
-        copy.append(title, value);
-        item.appendChild(copy);
-        updateMenuItem(item);
-
-        item.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            try {
-                plusButton.click();
-            } catch (_error) {
-                // Окно всё равно откроется, даже если штатное меню не закрылось.
-            }
-            window.setTimeout(() => openPopup(plusButton), 0);
-        });
-        return item;
-    }
-
-    function createCommandMenuItem(referenceButton, plusButton) {
-        const item = document.createElement('button');
-        item.type = 'button';
-        item.className = `${referenceButton.className || ''} ${COMMAND_MENU_ITEM_CLASS}`.trim();
-        item.setAttribute('aria-label', 'Постоянная команда для чата');
-        item.appendChild(createCommandIcon());
-
-        const copy = document.createElement('div');
-        copy.className = 'tm-sc-response-length-menu-copy';
-        const title = document.createElement('span');
-        title.className = 'tm-sc-response-length-menu-title';
-        title.textContent = 'Постоянная команда';
-        const value = document.createElement('span');
-        value.className = 'tm-sc-response-length-menu-value';
-        copy.append(title, value);
-        item.appendChild(copy);
-        updateCommandMenuItem(item);
-
-        item.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            try {
-                plusButton.click();
-            } catch (_error) {
-                // Окно всё равно откроется, даже если штатное меню не закрылось.
-            }
-            window.setTimeout(() => openCommandPopup(plusButton), 0);
-        });
-        return item;
-    }
-
-    function ensureMenuItems() {
-        ensureScheduled = false;
-        for (const plusButton of document.querySelectorAll(PLUS_BUTTON_SELECTOR)) {
-            const menu = findOpenPlusMenu(plusButton);
-            if (!menu) continue;
-            const referenceButton = menu.querySelector(NATIVE_MENU_ITEM_SELECTOR)
-                || runtime.dom?.findAction(menu, 'image') || runtime.dom?.findAction(menu, 'command')
-                || runtime.dom?.findAction(menu, 'suggest') || runtime.dom?.findAction(menu, 'search');
-            if (!referenceButton) continue;
-
-            const existingItem = menu.querySelector(`.${MENU_ITEM_CLASS}`);
-            if (existingItem) {
-                updateMenuItem(existingItem);
-            } else {
-                menu.appendChild(createMenuItem(referenceButton, plusButton));
-            }
-
-            const existingCommandItem = menu.querySelector(`.${COMMAND_MENU_ITEM_CLASS}`);
-            if (existingCommandItem) {
-                updateCommandMenuItem(existingCommandItem);
-            } else {
-                menu.appendChild(createCommandMenuItem(referenceButton, plusButton));
-            }
-        }
-    }
-
-    function scheduleEnsureMenuItems() {
-        if (ensureScheduled) return;
-        ensureScheduled = true;
-        window.requestAnimationFrame(ensureMenuItems);
-    }
-
-    function updatePopupValue() {
-        if (!popup) return;
-        const slider = popup.querySelector('.tm-sc-response-length-slider');
-        const output = popup.querySelector('.tm-sc-response-length-value');
-        if (slider && output) output.textContent = slider.value;
-    }
-
-    function createPopup() {
-        if (popup?.isConnected) return popup;
-        addStyles();
-
-        popup = document.createElement('section');
-        popup.id = POPUP_ID;
-        popup.hidden = true;
-        popup.setAttribute('role', 'dialog');
-        popup.setAttribute('aria-label', 'Настройки ответа для текущего чата');
-
-        const title = document.createElement('h2');
-        title.className = 'tm-sc-response-length-title';
-        title.textContent = 'Настройки ответа';
-        const caption = document.createElement('p');
-        caption.className = 'tm-sc-response-length-caption';
-        caption.textContent = 'Значения применяются только к этому диалогу.';
-
-        const error = document.createElement('p');
-        error.className = 'tm-sc-response-length-error';
-        error.hidden = true;
-
-        const valueRow = document.createElement('div');
-        valueRow.className = 'tm-sc-response-length-value-row';
-        const valueLabel = document.createElement('span');
-        valueLabel.className = 'tm-sc-response-length-value-label';
-        valueLabel.textContent = 'Максимум токенов';
-        const output = document.createElement('output');
-        output.className = 'tm-sc-response-length-value';
-        output.textContent = String(INITIAL_TOKENS);
-        valueRow.append(valueLabel, output);
-
-        const slider = document.createElement('input');
-        slider.className = 'tm-sc-response-length-slider';
-        slider.type = 'range';
-        slider.min = String(MIN_TOKENS);
-        slider.max = String(MAX_TOKENS);
-        slider.step = String(TOKEN_STEP);
-        slider.value = String(INITIAL_TOKENS);
-        slider.setAttribute('aria-label', 'Максимальная длина ответа в токенах');
-        slider.addEventListener('input', updatePopupValue);
-
-        const scale = document.createElement('div');
-        scale.className = 'tm-sc-response-length-scale';
-        scale.innerHTML = `<span>${MIN_TOKENS}</span><span>${MAX_TOKENS}</span>`;
-
-        const modelField = document.createElement('div');
-        modelField.className = 'tm-sc-response-model-field';
-        const modelLabel = document.createElement('label');
-        modelLabel.className = 'tm-sc-response-model-label';
-        modelLabel.textContent = 'Модель';
-        const modelSelect = document.createElement('select');
-        modelSelect.className = 'tm-sc-response-model-select';
-        modelSelect.setAttribute('aria-label', 'Модель для этого диалога');
-        for (const model of INFERENCE_MODELS) {
-            const option = document.createElement('option');
-            option.value = model.id;
-            option.textContent = model.label;
-            modelSelect.appendChild(option);
-        }
-        modelLabel.appendChild(modelSelect);
-        modelField.appendChild(modelLabel);
-
-        const save = document.createElement('button');
-        save.type = 'button';
-        save.className = 'tm-sc-response-length-save';
-        save.textContent = 'Сохранить';
-        save.addEventListener('click', () => {
-            const conversationId = popup.dataset.conversationId || '';
-            if (
-                !saveLimit(conversationId, slider.value)
-                || !saveModel(conversationId, modelSelect.value)
-            ) {
-                error.hidden = false;
-                error.textContent = 'Не удалось сохранить настройки этого диалога.';
-                return;
-            }
-            updateAllMenuItems();
-            closePopup();
-        });
-
-        popup.append(title, caption, error, valueRow, slider, scale, modelField, save);
-        document.body.appendChild(popup);
-        return popup;
-    }
-
-    function createCommandPopup() {
-        if (commandPopup?.isConnected) return commandPopup;
-        addStyles();
-
-        commandPopup = document.createElement('section');
-        commandPopup.id = COMMAND_POPUP_ID;
-        commandPopup.hidden = true;
-        commandPopup.setAttribute('role', 'dialog');
-        commandPopup.setAttribute('aria-label', 'Постоянная команда для текущего чата');
-
-        const title = document.createElement('h2');
-        title.className = 'tm-sc-persistent-command-title';
-        title.textContent = 'Постоянная команда';
-        const caption = document.createElement('p');
-        caption.className = 'tm-sc-persistent-command-caption';
-        caption.textContent = 'Ручная и каждая отмеченная команда добавляются отдельно к каждому твоему сообщению. /cmd вводить не нужно.';
-
-        const error = document.createElement('p');
-        error.className = 'tm-sc-persistent-command-error';
-        error.hidden = true;
-
-        const input = document.createElement('textarea');
-        input.className = 'tm-sc-persistent-command-input';
-        input.placeholder = 'Например: пиши коротко и не описывай действия за моего персонажа';
-        input.setAttribute('aria-label', 'Текст постоянной команды');
-
-        const checks = document.createElement('fieldset');
-        checks.className = 'tm-sc-quick-command-checks';
-
-        const actions = document.createElement('div');
-        actions.className = 'tm-sc-persistent-command-actions';
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'tm-sc-persistent-command-delete';
-        remove.textContent = 'Удалить ручную';
-        const save = document.createElement('button');
-        save.type = 'button';
-        save.className = 'tm-sc-persistent-command-save';
-        save.textContent = 'Сохранить';
-        actions.append(remove, save);
-
-        const updateButtons = () => {
-            const hasConversation = Boolean(commandPopup.dataset.conversationId);
-            save.disabled = !hasConversation;
-            remove.disabled = !hasConversation || !getSavedCommand(
-                commandPopup.dataset.conversationId || '',
-            );
-        };
-        input.addEventListener('input', () => {
-            error.hidden = true;
-            updateButtons();
-        });
-        save.addEventListener('click', () => {
-            const conversationId = commandPopup.dataset.conversationId || '';
-            const selectedIds = [...checks.querySelectorAll('input:checked')].map(node => node.value);
-            try { saveCommand(conversationId, input.value, selectedIds); }
-            catch (cause) {
-                error.hidden = false;
-                error.textContent = cause.message || 'Не удалось сохранить команды.';
-                updateButtons();
-                return;
-            }
-            updateAllMenuItems();
-            closeCommandPopup();
-        });
-        remove.addEventListener('click', () => {
-            const conversationId = commandPopup.dataset.conversationId || '';
-            if (!deleteCommand(conversationId)) {
-                error.hidden = false;
-                error.textContent = 'Не удалось определить текущий диалог.';
-                return;
-            }
-            input.value = '';
-            updateAllMenuItems();
-            closeCommandPopup();
-        });
-
-        commandPopup.append(title, caption, error, input, checks, actions);
-        commandPopup.updateButtons = updateButtons;
-        document.body.appendChild(commandPopup);
-        return commandPopup;
-    }
-
-    function positionPopup() {
-        if (!popup || popup.hidden || !popupAnchor?.isConnected) return;
-        const anchorRect = popupAnchor.getBoundingClientRect();
-        const popupRect = popup.getBoundingClientRect();
-        const margin = 12;
-        const left = Math.min(
-            window.innerWidth - popupRect.width - margin,
-            Math.max(margin, anchorRect.left),
-        );
-        const above = anchorRect.top - popupRect.height - 10;
-        const top = above >= margin
-            ? above
-            : Math.min(window.innerHeight - popupRect.height - margin, anchorRect.bottom + 10);
-        popup.style.left = `${Math.max(margin, left)}px`;
-        popup.style.top = `${Math.max(margin, top)}px`;
-    }
-
-    function openPopup(anchor) {
-        closeCommandPopup();
-        const panel = createPopup();
-        const context = getCurrentChatContext();
-        const savedLimit = context ? getSavedLimit(context.conversationId) : null;
-        const savedModel = context ? getSavedModel(context.conversationId) : '';
-        const slider = panel.querySelector('.tm-sc-response-length-slider');
-        const modelSelect = panel.querySelector('.tm-sc-response-model-select');
-        const save = panel.querySelector('.tm-sc-response-length-save');
-        const error = panel.querySelector('.tm-sc-response-length-error');
-
-        panel.dataset.conversationId = context?.conversationId || '';
-        slider.value = String(savedLimit ?? INITIAL_TOKENS);
-        modelSelect.querySelector('[data-legacy-model]')?.remove();
-        if (savedModel === 'glm45') {
-            const legacy = document.createElement('option');
-            legacy.value = savedModel;
-            legacy.textContent = getModelLabel(savedModel);
-            legacy.dataset.legacyModel = 'true';
-            modelSelect.append(legacy);
-        }
-        modelSelect.value = savedModel;
-        save.disabled = !context?.conversationId;
-        error.hidden = Boolean(context?.conversationId);
-        error.textContent = context?.conversationId
-            ? ''
-            : 'Открой конкретный сохранённый диалог, чтобы задать настройки.';
-        updatePopupValue();
-
-        popupAnchor = anchor;
-        panel.hidden = false;
-        panel.style.visibility = 'hidden';
-        positionPopup();
-        panel.style.visibility = '';
-        window.requestAnimationFrame(positionPopup);
-    }
-
-    function closePopup() {
-        if (!popup) return;
-        popup.hidden = true;
-        popupAnchor = null;
-    }
-
-    function positionCommandPopup() {
-        if (!commandPopup || commandPopup.hidden || !commandPopupAnchor?.isConnected) return;
-        const anchorRect = commandPopupAnchor.getBoundingClientRect();
-        const popupRect = commandPopup.getBoundingClientRect();
-        const margin = 12;
-        const left = Math.min(
-            window.innerWidth - popupRect.width - margin,
-            Math.max(margin, anchorRect.left),
-        );
-        const above = anchorRect.top - popupRect.height - 10;
-        const top = above >= margin
-            ? above
-            : Math.min(window.innerHeight - popupRect.height - margin, anchorRect.bottom + 10);
-        commandPopup.style.left = `${Math.max(margin, left)}px`;
-        commandPopup.style.top = `${Math.max(margin, top)}px`;
-    }
-
-    function renderCommandChecks(selectedIds) {
-        if (!commandPopup) return;
-        const list = commandPopup.querySelector('.tm-sc-quick-command-checks');
-        const chosen = new Set(selectedIds);
-        list.replaceChildren();
-        const legend = document.createElement('legend'); legend.textContent = 'Быстрые команды'; list.append(legend);
-        try {
-            const commands = runtime.quickCommands.list();
-            for (const command of commands) {
-                const label = document.createElement('label');
-                const check = document.createElement('input');
-                check.type = 'checkbox'; check.value = command.id; check.checked = chosen.has(command.id);
-                check.disabled = !commandPopup.dataset.conversationId;
-                label.append(check, document.createTextNode(command.name)); list.append(label);
-            }
-            if (!commands.length) {
-                const empty = document.createElement('p'); empty.textContent = 'Добавь команды в SC Tools → Быстрые команды.'; list.append(empty);
-            }
-        } catch (error) {
-            const warning = document.createElement('p'); warning.textContent = error.message; list.append(warning);
-        }
-    }
-
-    function openCommandPopup(anchor) {
-        closePopup();
-        const panel = createCommandPopup();
-        const context = getCurrentChatContext();
-        const savedCommand = context ? getSavedCommand(context.conversationId) : '';
-        const input = panel.querySelector('.tm-sc-persistent-command-input');
-        const error = panel.querySelector('.tm-sc-persistent-command-error');
-
-        panel.dataset.conversationId = context?.conversationId || '';
-        let selectedIds = [];
-        try { selectedIds = runtime.quickCommands.selectedIds(context?.conversationId || ''); } catch { /* The checklist displays the storage error. */ }
-        renderCommandChecks(selectedIds);
-        input.value = savedCommand;
-        error.hidden = Boolean(context?.conversationId);
-        error.textContent = context?.conversationId
-            ? ''
-            : 'Открой конкретный сохранённый диалог, чтобы задать ему команду.';
-        panel.updateButtons?.();
-
-        commandPopupAnchor = anchor;
-        panel.hidden = false;
-        panel.style.visibility = 'hidden';
-        positionCommandPopup();
-        panel.style.visibility = '';
-        window.requestAnimationFrame(positionCommandPopup);
-        window.setTimeout(() => input.focus(), 0);
-    }
-
-    function closeCommandPopup() {
-        if (!commandPopup) return;
-        commandPopup.hidden = true;
-        commandPopupAnchor = null;
-    }
-
-    function handleRootMutations(records) {
-        for (const record of records) {
-            for (const node of record.addedNodes) {
-                if (!(node instanceof Element)) continue;
-                if (
-                    node.matches(PLUS_BUTTON_SELECTOR)
-                    || node.matches(NATIVE_MENU_ITEM_SELECTOR)
-                    || node.querySelector(PLUS_BUTTON_SELECTOR)
-                    || node.querySelector(NATIVE_MENU_ITEM_SELECTOR)
-                ) {
-                    scheduleEnsureMenuItems();
-                    return;
-                }
-            }
-        }
-    }
-
-    function scheduleObserverRetry() {
-        if (observerRetryTimer) return;
-        const delay = observerRetryDelay;
-        observerRetryDelay = Math.min(observerRetryDelay * 2, 4000);
-        observerRetryTimer = window.setTimeout(() => {
-            observerRetryTimer = null;
-            ensureRootObserver();
-        }, delay);
-    }
-
-    function ensureRootObserver() {
-        if (!document.documentElement) {
-            scheduleObserverRetry();
-            return;
-        }
-        try {
-            if (!rootObserver) rootObserver = new MutationObserver(handleRootMutations);
-            rootObserver.observe(document.documentElement, { childList: true, subtree: true });
-            observerRetryDelay = 250;
-            if (observerRetryTimer) {
-                window.clearTimeout(observerRetryTimer);
-                observerRetryTimer = null;
-            }
-        } catch (error) {
-            rootObserver = null;
-            console.warn('[Response Length] DOM ещё не готов, повторяю подключение.', error);
-            scheduleObserverRetry();
-        }
-    }
-
+    let panel = null;
     function startUi() {
-        if (!document.documentElement) return;
-        if (uiStarted) {
-            ensureRootObserver();
-            scheduleEnsureMenuItems();
-            return;
-        }
-        uiStarted = true;
-        addStyles();
-        createPopup();
-        createCommandPopup();
-
-        document.addEventListener('click', (event) => {
-            const plusButton = event.target instanceof Element
-                ? event.target.closest(PLUS_BUTTON_SELECTOR)
-                : null;
-            if (plusButton) window.setTimeout(scheduleEnsureMenuItems, 0);
-        }, true);
-
-        const closePopupsOutside = (event) => {
-            const insideTokenPopup = popup && !popup.hidden && popup.contains(event.target);
-            const insideCommandPopup = commandPopup
-                && !commandPopup.hidden
-                && commandPopup.contains(event.target);
-            if (insideTokenPopup || insideCommandPopup) return;
-            closePopup();
-            closeCommandPopup();
-        };
-        // Capture before site handlers; also support click-only/keyboard activation.
-        window.addEventListener('pointerdown', closePopupsOutside, true);
-        window.addEventListener('click', closePopupsOutside, true);
-
-        document.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape' && popup && !popup.hidden) closePopup();
-            if (event.key === 'Escape' && commandPopup && !commandPopup.hidden) {
-                closeCommandPopup();
-            }
-        }, true);
-
-        window.addEventListener('resize', positionPopup, { passive: true });
-        window.addEventListener('resize', positionCommandPopup, { passive: true });
-        window.addEventListener('storage', (event) => {
-            if (
-                event.key === STORAGE_KEY
-                || event.key === MODEL_STORAGE_KEY
-                || event.key === COMMAND_STORAGE_KEY
-            ) {
-                updateAllMenuItems();
-            }
+        if (panel) { panel.refresh(); return; }
+        panel = runtime.createChatPanel({
+            getContext: getCurrentChatContext,
+            models: INFERENCE_MODELS,
+            minTokens: MIN_TOKENS, maxTokens: MAX_TOKENS, tokenStep: TOKEN_STEP, initialTokens: INITIAL_TOKENS,
+            read(conversation) {
+                const library = runtime.quickCommands.snapshot(conversation);
+                return { model: getSavedModel(conversation), limit: getSavedLimit(conversation), manual: getSavedCommand(conversation), ...library };
+            },
+            save: {
+                model(conversation, value) { if (!saveModel(conversation, value)) throw new Error('Не удалось сохранить модель.'); },
+                limit(conversation, value) { if (!saveLimit(conversation, value)) throw new Error('Не удалось сохранить лимит ответа.'); },
+                manual: saveManualCommand,
+                commands: (conversation, ids) => runtime.quickCommands.setSelectedIds(conversation, ids),
+            },
         });
-        window.addEventListener('popstate', () => {
-            closePopup();
-            closeCommandPopup();
-        });
-        window.addEventListener('pageshow', () => {
-            ensureRootObserver();
-            scheduleEnsureMenuItems();
-        });
-        ensureRootObserver();
-        scheduleEnsureMenuItems();
     }
-
-    runtime.quickCommands.subscribe(() => {
-        updateAllMenuItems();
-        if (commandPopup && !commandPopup.hidden) {
-            const ids = [...commandPopup.querySelectorAll('.tm-sc-quick-command-checks input:checked')].map(node => node.value);
-            renderCommandChecks(ids);
-            window.requestAnimationFrame(positionCommandPopup);
-        }
-    });
+    runtime.quickCommands.subscribe(() => panel?.refresh());
     installNetworkOverride();
     runtime.onDomReady(startUi);
-    runtime.dom?.subscribe(scheduleEnsureMenuItems);
-
+    runtime.dom?.subscribe(() => panel?.refresh());
 }
 
 
@@ -16009,7 +15299,7 @@ const store = createStore(MODULE_CATALOG, gm);
 const quickCommands = createQuickCommands(gm);
 const controls = createInterface({ store, catalog: MODULE_CATALOG, storage: localStorage, version: SUITE_VERSION, quickCommands });
 GM_registerMenuCommand('SpicyChat Tools — настройки и перенос', controls.open);
-const runtime = { quickCommands, getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters(), models: QUICK_MODELS, nativeModels: createNativeModelAdapter(), onDomReady };
+const runtime = { quickCommands, createChatPanel, getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters(), models: QUICK_MODELS, nativeModels: createNativeModelAdapter(), onDomReady };
 const started = new Set();
 
 function startFeature(module) {
