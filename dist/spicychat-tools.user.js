@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SpicyChat Tools
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
-// @version      1.0.7
+// @version      1.0.8
 // @description  Единый комплект из 12 функций SpicyChat с локальными настройками и переносом старых данных.
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
@@ -26,7 +26,7 @@
 (function () {
 'use strict';
 
-const SUITE_VERSION = "1.0.7";
+const SUITE_VERSION = "1.0.8";
 
 const MODULE_CATALOG = [
   {
@@ -39,7 +39,8 @@ const MODULE_CATALOG = [
     "storageKeys": [
       "tm-sc-per-chat-response-length-v1",
       "tm-sc-per-chat-inference-model-v1",
-      "tm-sc-per-chat-persistent-command-v1"
+      "tm-sc-per-chat-persistent-command-v1",
+      "spchat-tweaks:quick-commands:v1"
     ]
   },
   {
@@ -326,6 +327,127 @@ async function readZip(bytes) {
 }
 
 
+// ---- src/core/quick-commands.js ----
+
+const QUICK_COMMANDS_KEY = 'spchat-tweaks:quick-commands:v1';
+const MANUAL_COMMANDS_KEY = 'tm-sc-per-chat-persistent-command-v1';
+
+function commandText(value) {
+    return typeof value === 'string' ? value.trim().replace(/^\/cmd(?:\s+|$)/i, '').trim() : '';
+}
+
+function validateQuickCommands(raw) {
+    const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+    if (!record(raw) || raw.schema !== 1 || !Array.isArray(raw.commands) || !record(raw.selections)) {
+        throw new Error('Не удалось прочитать библиотеку быстрых команд. Данные не изменены.');
+    }
+    const seen = new Set();
+    const commands = raw.commands.map(item => {
+        if (!record(item) || typeof item.id !== 'string' || !/^[\w-]{1,80}$/.test(item.id)
+            || seen.has(item.id) || typeof item.name !== 'string' || !item.name.trim()
+            || typeof item.text !== 'string' || !commandText(item.text)) {
+            throw new Error('Некорректная запись в библиотеке быстрых команд.');
+        }
+        seen.add(item.id);
+        return { id: item.id, name: item.name.trim(), text: commandText(item.text) };
+    });
+    const selections = Object.create(null);
+    for (const [conversation, ids] of Object.entries(raw.selections)) {
+        if (!conversation.trim() || !Array.isArray(ids) || ids.some(id => typeof id !== 'string')) {
+            throw new Error('Некорректный выбор быстрых команд для чата.');
+        }
+        const known = [...new Set(ids)].filter(id => seen.has(id));
+        if (known.length) selections[conversation] = known;
+    }
+    return { schema: 1, commands, selections };
+}
+
+function createQuickCommands(gm) {
+    const listeners = new Set();
+    const read = () => validateQuickCommands(gm.get(QUICK_COMMANDS_KEY, { schema: 1, commands: [], selections: {} }));
+    const emit = () => {
+        for (const listener of listeners) {
+            try { listener(); } catch (error) { console.warn('[Quick Commands] Не удалось обновить интерфейс.', error); }
+        }
+    };
+    const write = data => { gm.set(QUICK_COMMANDS_KEY, validateQuickCommands(data)); emit(); };
+    const selected = (data, conversation) => data.selections[conversation] || [];
+    return {
+        list: () => read().commands,
+        selectedIds: conversation => selected(read(), conversation),
+        active(conversation) {
+            const data = read();
+            const ids = new Set(selected(data, conversation));
+            return data.commands.filter(command => ids.has(command.id));
+        },
+        upsert({ id, name, text }) {
+            if (typeof name !== 'string' || !name.trim()) throw new Error('Укажи название команды.');
+            if (!commandText(text)) throw new Error('Введи текст команды.');
+            const data = read();
+            let index = id ? data.commands.findIndex(command => command.id === id) : -1;
+            if (id && index < 0) throw new Error('Команда уже удалена. Открой библиотеку заново.');
+            if (!id) {
+                do { id = crypto.randomUUID(); } while (data.commands.some(command => command.id === id));
+                index = data.commands.length;
+            }
+            data.commands[index] = { id, name: name.trim(), text: commandText(text) };
+            write(data);
+            return id;
+        },
+        remove(id) {
+            const data = read();
+            data.commands = data.commands.filter(command => command.id !== id);
+            for (const [conversation, ids] of Object.entries(data.selections)) {
+                const remaining = ids.filter(value => value !== id);
+                if (remaining.length) data.selections[conversation] = remaining;
+                else delete data.selections[conversation];
+            }
+            write(data);
+        },
+        saveChat(conversation, ids, manual, storage) {
+            if (typeof conversation !== 'string' || !conversation.trim()) throw new Error('Открой конкретный сохранённый диалог.');
+            if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) throw new Error('Не удалось прочитать выбранные команды.');
+            const data = read();
+            const known = new Set(data.commands.map(command => command.id));
+            const chosen = [...new Set(ids)].filter(id => known.has(id));
+            if (chosen.length) data.selections[conversation] = chosen;
+            else delete data.selections[conversation];
+            const beforeLocal = storage.getItem(MANUAL_COMMANDS_KEY);
+            const manualMap = JSON.parse(beforeLocal || '{}');
+            if (!manualMap || typeof manualMap !== 'object' || Array.isArray(manualMap)) throw new Error('Не удалось прочитать сохранённые ручные команды.');
+            // Define rather than assign so even a malformed conversation key cannot
+            // invoke Object.prototype.__proto__ on imported local JSON.
+            const text = commandText(manual);
+            if (text) Object.defineProperty(manualMap, conversation, { value: text, enumerable: true, writable: true, configurable: true });
+            else delete manualMap[conversation];
+            const beforeGm = gm.get(QUICK_COMMANDS_KEY, undefined);
+            let gmAttempted = false;
+            try {
+                storage.setItem(MANUAL_COMMANDS_KEY, JSON.stringify(manualMap));
+                gmAttempted = true;
+                gm.set(QUICK_COMMANDS_KEY, validateQuickCommands(data));
+            } catch (error) {
+                let failed = false;
+                try {
+                    if (beforeLocal === null) storage.removeItem(MANUAL_COMMANDS_KEY);
+                    else storage.setItem(MANUAL_COMMANDS_KEY, beforeLocal);
+                } catch { failed = true; }
+                if (gmAttempted) {
+                    try {
+                        if (beforeGm === undefined) gm.delete(QUICK_COMMANDS_KEY);
+                        else gm.set(QUICK_COMMANDS_KEY, beforeGm);
+                    } catch { failed = true; }
+                }
+                if (failed) throw new Error('Сохранение команд не завершено, откат не полностью удался. Проверь настройки чата.');
+                throw error;
+            }
+            emit();
+        },
+        subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    };
+}
+
+
 // ---- src/core/migration.js ----
 
 
@@ -401,7 +523,7 @@ function planLegacyImport(files, catalog, localStorage) {
                 if (!allowedStorageKey(key, module)) continue;
                 const value = decodeStorageValue(raw);
                 if (!value || typeof value !== 'object') throw new Error('Данные модуля имеют неожиданный формат. Импорт остановлен.');
-                plan.values[key] = value;
+                plan.values[key] = key === QUICK_COMMANDS_KEY ? validateQuickCommands(value) : value;
                 keys++;
             }
         } else if (module.storageKeys.length && !['emoji', 'per-chat'].includes(module.id)) {
@@ -410,7 +532,7 @@ function planLegacyImport(files, catalog, localStorage) {
         let localKeys = 0;
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
-            if (!allowedStorageKey(key, module)) continue;
+            if (key === QUICK_COMMANDS_KEY || !allowedStorageKey(key, module)) continue;
             const raw = localStorage.getItem(key);
             if (raw === null) continue;
             const value = JSON.parse(raw);
@@ -445,10 +567,10 @@ function planSuiteImport(raw, catalog) {
         let localKeys = 0;
         for (const [key, value] of Object.entries(raw.values)) if (allowedStorageKey(key, module)) {
             if (!value || typeof value !== 'object') throw new Error('Некорректное значение в резервной копии.');
-            plan.values[key] = value;
+            plan.values[key] = key === QUICK_COMMANDS_KEY ? validateQuickCommands(value) : value;
             keys++;
         }
-        for (const [key, value] of Object.entries(raw.local)) if (allowedStorageKey(key, module)) {
+        for (const [key, value] of Object.entries(raw.local)) if (key !== QUICK_COMMANDS_KEY && allowedStorageKey(key, module)) {
             if (typeof value !== 'string') throw new Error('Некорректные локальные данные в резервной копии.');
             const decoded = JSON.parse(value);
             if (!decoded || typeof decoded !== 'object') throw new Error('Некорректные локальные данные.');
@@ -517,16 +639,86 @@ function exportSuite(store, catalog, localStorage) {
     for (const key of store.gm.list()) if (catalog.some(module => allowedStorageKey(key, module))) values[key] = store.gm.get(key);
     for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (catalog.some(module => allowedStorageKey(key, module))) local[key] = localStorage.getItem(key);
+        if (key !== QUICK_COMMANDS_KEY && catalog.some(module => allowedStorageKey(key, module))) local[key] = localStorage.getItem(key);
     }
     return { format: 'spchat-tweaks-backup', schema: 1, exportedAt: new Date().toISOString(), settings: store.settings, values, local };
+}
+
+
+// ---- src/core/command-manager.js ----
+
+// The library editor belongs to SC Tools; chat popups only choose saved entries.
+function createCommandManager({ container, library }) {
+    let editing = null;
+    const list = document.createElement('div'); list.className = 'quick-command-list';
+    const editor = document.createElement('div'); editor.className = 'quick-command-editor';
+    const field = (title, tag, name) => {
+        const label = document.createElement('label'); label.className = 'field'; label.textContent = title;
+        const input = document.createElement(tag); input.name = name;
+        if (tag === 'input') input.type = 'text';
+        else input.rows = 5;
+        label.append(input); editor.append(label);
+        return input;
+    };
+    const name = field('Название команды', 'input', 'quick-command-name');
+    const text = field('Текст команды', 'textarea', 'quick-command-text');
+    const notice = document.createElement('p'); notice.className = 'status'; notice.setAttribute('role', 'status');
+    const actions = document.createElement('div'); actions.className = 'actions';
+    const makeButton = (title, handler) => {
+        const button = document.createElement('button'); button.type = 'button'; button.textContent = title;
+        button.addEventListener('click', () => {
+            notice.textContent = ''; notice.className = 'status';
+            try { handler(); } catch (error) { notice.className = 'status error'; notice.textContent = error.message || 'Не удалось сохранить команду.'; }
+        });
+        return button;
+    };
+    const reset = () => { editing = null; name.value = ''; text.value = ''; save.textContent = 'Добавить команду'; cancel.hidden = true; };
+    const save = makeButton('Добавить команду', () => {
+        library.upsert({ id: editing, name: name.value, text: text.value }); reset(); render(); notice.textContent = 'Команда сохранена.';
+    });
+    save.className = 'primary';
+    const cancel = makeButton('Отмена', reset); cancel.hidden = true;
+    actions.append(save, cancel); editor.append(actions, notice); container.append(list, editor);
+
+    function render() {
+        list.replaceChildren();
+        try {
+            const commands = library.list();
+            if (!commands.length) {
+                const empty = document.createElement('p'); empty.textContent = 'Команд пока нет. Добавь первую ниже.'; list.append(empty);
+            }
+            for (const command of commands) {
+                const card = document.createElement('div'); card.className = 'quick-command-card'; card.dataset.commandId = command.id;
+                const heading = document.createElement('h3'); heading.textContent = command.name;
+                const preview = document.createElement('p'); preview.className = 'quick-command-text'; preview.textContent = command.text;
+                const buttons = document.createElement('div'); buttons.className = 'actions';
+                buttons.append(makeButton('Редактировать', () => {
+                    // Refresh the entry in case another tab has changed it.
+                    const current = library.list().find(item => item.id === command.id);
+                    if (!current) { render(); throw new Error('Команда уже удалена.'); }
+                    editing = current.id; name.value = current.name; text.value = current.text;
+                    save.textContent = 'Сохранить команду'; cancel.hidden = false; name.focus();
+                }), makeButton('Удалить', () => {
+                    library.remove(command.id);
+                    if (editing === command.id) reset();
+                    render(); notice.textContent = 'Команда удалена.';
+                }));
+                card.append(heading, preview, buttons); list.append(card);
+            }
+            save.disabled = false;
+        } catch (error) {
+            const warning = document.createElement('p'); warning.className = 'error'; warning.textContent = error.message;
+            list.append(warning); save.disabled = true;
+        }
+    }
+    return { refresh() { reset(); render(); notice.textContent = ''; } };
 }
 
 
 // ---- src/core/ui.js ----
 
 
-function createInterface({ store, catalog, storage, version, reload = () => location.reload(), shadowMode = 'closed' }) {
+function createInterface({ store, catalog, storage, version, reload = () => location.reload(), quickCommands, shadowMode = 'closed' }) {
     let host;
     let root;
     let panel;
@@ -535,6 +727,7 @@ function createInterface({ store, catalog, storage, version, reload = () => loca
     let preview;
     let plan = null;
     let importedNow = false;
+    let commandManager;
 
     const button = (text, handler, className = '') => {
         const node = document.createElement('button');
@@ -568,6 +761,7 @@ function createInterface({ store, catalog, storage, version, reload = () => loca
     }
 
     function fillForm() {
+        commandManager?.refresh();
         const config = store.settings;
         for (const { id } of catalog) form.elements.namedItem(`module-${id}`).checked = config.modules[id];
         for (const id of ['summary', 'tts']) {
@@ -663,10 +857,10 @@ function createInterface({ store, catalog, storage, version, reload = () => loca
             :host { all: initial; color-scheme: dark; font: 14px/1.5 system-ui, sans-serif; }
             * { box-sizing: border-box; }
             [hidden] { display: none !important; }
-            button, input { font: inherit; }
+            button, input, textarea { font: inherit; }
             button { cursor: pointer; border: 1px solid #454958; background: #292d3b; color: #f4f4fa; padding: 9px 13px; border-radius: 8px; }
             button:hover { background: #363b4d; }
-            button:focus-visible, input:focus-visible { outline: 2px solid #a9a0ff; outline-offset: 2px; }
+            button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #a9a0ff; outline-offset: 2px; }
             button:disabled { opacity: .5; cursor: default; }
             .primary { background: #7463d9; border-color: #9a8cec; }
             .primary:hover { background: #8674eb; }
@@ -684,7 +878,11 @@ function createInterface({ store, catalog, storage, version, reload = () => loca
             input[type=checkbox] { accent-color: #a395f7; margin-top: 4px; }
             .grid small { color: #9a9bb3; margin-left: 4px; }
             .field { display: block; margin-top: 10px; color: #c1c1d1; }
-            input[type=url], input[type=password] { display: block; width: 100%; margin-top: 5px; background: #11131d; color: #f4f4fa; border: 1px solid #454958; padding: 10px; border-radius: 7px; }
+            input[type=url], input[type=password], input[type=text], textarea { display: block; width: 100%; margin-top: 5px; background: #11131d; color: #f4f4fa; border: 1px solid #454958; padding: 10px; border-radius: 7px; }
+            textarea { resize: vertical; min-height: 100px; }
+            .quick-command-card { padding: 12px; margin: 10px 0; border: 1px solid #454958; border-radius: 8px; }
+            .quick-command-card h3 { margin: 0; overflow-wrap: anywhere; }
+            .quick-command-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 100px; overflow: auto; }
             .endpoint { margin-top: 18px; } .endpoint h3 { margin: 0; font-size: 14px; }
             .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 15px; }
             .status { padding: 12px 0 0; color: #a8e6c8; white-space: pre-wrap; }
@@ -719,7 +917,7 @@ function createInterface({ store, catalog, storage, version, reload = () => loca
             if (panel.hidden) return;
             if (event.key === 'Escape') { event.stopPropagation(); close(); }
             if (event.key === 'Tab') {
-                const focusable = Array.from(card.querySelectorAll('button:not(:disabled), input:not([type=hidden])')).filter(node => !node.closest('[hidden]'));
+                const focusable = Array.from(card.querySelectorAll('button:not(:disabled), input:not([type=hidden]), textarea')).filter(node => !node.closest('[hidden]'));
                 const first = focusable[0]; const last = focusable.at(-1);
                 if (event.shiftKey && root.activeElement === first) { event.preventDefault(); last?.focus(); }
                 else if (!event.shiftKey && root.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -744,6 +942,9 @@ function createInterface({ store, catalog, storage, version, reload = () => loca
             label.append(checkbox, document.createTextNode(module.title)); grid.append(label);
         }
         features.append(grid);
+
+        const commands = section('Быстрые команды', 'Общая библиотека для всех чатов. В меню «+ → Постоянная команда» отметь нужные для конкретного диалога. /cmd вводить не нужно. Изменения библиотеки сохраняются сразу. Удаление убирает команду из всех чатов.');
+        commandManager = createCommandManager({ container: commands, library: quickCommands });
 
         const endpoints = section('Обработчики', 'Адреса и токены сохраняются в Tampermonkey. При переносе они подхватятся из старых скриптов.');
         for (const [id, title] of [['summary', 'Пересказ через OpenAI'], ['tts', 'Озвучка Inworld']]) {
@@ -1271,20 +1472,20 @@ function init_per_chat(runtime) {
         return readCommands()[id] || '';
     }
 
-    function saveCommand(conversationId, value) {
-        const id = normalizeConversationId(conversationId);
-        const command = normalizeCommand(value);
-        if (!id || !command) return false;
-
-        const commands = readCommands();
-        commands[id] = command;
-        try {
-            localStorage.setItem(COMMAND_STORAGE_KEY, JSON.stringify(commands));
-            return true;
-        } catch (error) {
-            console.warn('[Persistent Command] Не удалось сохранить команду.', error);
-            return false;
+    function getActiveCommands(conversationId) {
+        try { return runtime.quickCommands.active(conversationId); }
+        catch (error) {
+            console.warn('[Quick Commands] Не удалось прочитать быстрые команды.', error);
+            return [];
         }
+    }
+
+    function getCommandTexts(conversationId) {
+        return [getSavedCommand(conversationId), ...getActiveCommands(conversationId).map(command => command.text)].filter(Boolean);
+    }
+
+    function saveCommand(conversationId, value, selectedIds) {
+        runtime.quickCommands.saveChat(conversationId, selectedIds, value, localStorage);
     }
 
     function deleteCommand(conversationId) {
@@ -1336,7 +1537,7 @@ function init_per_chat(runtime) {
             const conversationId = normalizeConversationId(payload?.conversation_id);
             const savedLimit = getSavedLimit(conversationId);
             const savedModel = getSavedModel(conversationId);
-            const savedCommand = getSavedCommand(conversationId);
+            const commandTexts = getCommandTexts(conversationId);
             let changed = false;
 
             if (
@@ -1359,8 +1560,8 @@ function init_per_chat(runtime) {
                 changed = true;
             }
 
-            if (savedCommand && typeof payload.message === 'string' && payload.message.trim()) {
-                const commandSuffix = `/cmd ${savedCommand}`;
+            if (commandTexts.length && typeof payload.message === 'string' && payload.message.trim()) {
+                const commandSuffix = commandTexts.map(text => `/cmd ${text}`).join('\n\n');
                 const originalMessage = payload.message.trimEnd();
                 if (!originalMessage.endsWith(commandSuffix)) {
                     payload.message = `${originalMessage}\n\n${commandSuffix}`;
@@ -1653,6 +1854,13 @@ function init_per_chat(runtime) {
                 white-space: nowrap !important;
             }
 
+            #${COMMAND_POPUP_ID} { max-height: calc(100dvh - 24px) !important; overflow-y: auto !important; }
+            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks { margin: 14px 0 0 !important; padding: 0 !important; border: 0 !important; max-height: 200px; overflow-y: auto; }
+            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks legend { margin-bottom: 8px; color: #ddd; font-size: 13px; font-weight: 600; }
+            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks label { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; }
+            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks input { margin: 3px 0 0; accent-color: #a395f7; flex-shrink: 0; }
+            #${COMMAND_POPUP_ID} .tm-sc-quick-command-checks p { color: #bbb; font-size: 12px; }
+
             #${COMMAND_POPUP_ID} .tm-sc-persistent-command-input {
                 box-sizing: border-box !important;
                 width: 100% !important;
@@ -1794,7 +2002,8 @@ function init_per_chat(runtime) {
         const savedCommand = context ? getSavedCommand(context.conversationId) : '';
         const value = item.querySelector('.tm-sc-response-length-menu-value');
         if (!value) return;
-        value.textContent = savedCommand || 'Для этого чата не задана';
+        const names = context ? getActiveCommands(context.conversationId).map(command => command.name) : [];
+        value.textContent = [savedCommand, ...names].filter(Boolean).join(' · ') || 'Для этого чата не задана';
     }
 
     function updateAllMenuItems() {
@@ -2009,7 +2218,7 @@ function init_per_chat(runtime) {
         title.textContent = 'Постоянная команда';
         const caption = document.createElement('p');
         caption.className = 'tm-sc-persistent-command-caption';
-        caption.textContent = 'Будет дописываться к каждому твоему сообщению. /cmd вводить не нужно.';
+        caption.textContent = 'Ручная и каждая отмеченная команда добавляются отдельно к каждому твоему сообщению. /cmd вводить не нужно.';
 
         const error = document.createElement('p');
         error.className = 'tm-sc-persistent-command-error';
@@ -2020,12 +2229,15 @@ function init_per_chat(runtime) {
         input.placeholder = 'Например: пиши коротко и не описывай действия за моего персонажа';
         input.setAttribute('aria-label', 'Текст постоянной команды');
 
+        const checks = document.createElement('fieldset');
+        checks.className = 'tm-sc-quick-command-checks';
+
         const actions = document.createElement('div');
         actions.className = 'tm-sc-persistent-command-actions';
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'tm-sc-persistent-command-delete';
-        remove.textContent = 'Удалить';
+        remove.textContent = 'Удалить ручную';
         const save = document.createElement('button');
         save.type = 'button';
         save.className = 'tm-sc-persistent-command-save';
@@ -2034,7 +2246,7 @@ function init_per_chat(runtime) {
 
         const updateButtons = () => {
             const hasConversation = Boolean(commandPopup.dataset.conversationId);
-            save.disabled = !hasConversation || !normalizeCommand(input.value);
+            save.disabled = !hasConversation;
             remove.disabled = !hasConversation || !getSavedCommand(
                 commandPopup.dataset.conversationId || '',
             );
@@ -2045,9 +2257,11 @@ function init_per_chat(runtime) {
         });
         save.addEventListener('click', () => {
             const conversationId = commandPopup.dataset.conversationId || '';
-            if (!saveCommand(conversationId, input.value)) {
+            const selectedIds = [...checks.querySelectorAll('input:checked')].map(node => node.value);
+            try { saveCommand(conversationId, input.value, selectedIds); }
+            catch (cause) {
                 error.hidden = false;
-                error.textContent = 'Введи текст команды.';
+                error.textContent = cause.message || 'Не удалось сохранить команды.';
                 updateButtons();
                 return;
             }
@@ -2066,7 +2280,7 @@ function init_per_chat(runtime) {
             closeCommandPopup();
         });
 
-        commandPopup.append(title, caption, error, input, actions);
+        commandPopup.append(title, caption, error, input, checks, actions);
         commandPopup.updateButtons = updateButtons;
         document.body.appendChild(commandPopup);
         return commandPopup;
@@ -2149,6 +2363,29 @@ function init_per_chat(runtime) {
         commandPopup.style.top = `${Math.max(margin, top)}px`;
     }
 
+    function renderCommandChecks(selectedIds) {
+        if (!commandPopup) return;
+        const list = commandPopup.querySelector('.tm-sc-quick-command-checks');
+        const chosen = new Set(selectedIds);
+        list.replaceChildren();
+        const legend = document.createElement('legend'); legend.textContent = 'Быстрые команды'; list.append(legend);
+        try {
+            const commands = runtime.quickCommands.list();
+            for (const command of commands) {
+                const label = document.createElement('label');
+                const check = document.createElement('input');
+                check.type = 'checkbox'; check.value = command.id; check.checked = chosen.has(command.id);
+                check.disabled = !commandPopup.dataset.conversationId;
+                label.append(check, document.createTextNode(command.name)); list.append(label);
+            }
+            if (!commands.length) {
+                const empty = document.createElement('p'); empty.textContent = 'Добавь команды в SC Tools → Быстрые команды.'; list.append(empty);
+            }
+        } catch (error) {
+            const warning = document.createElement('p'); warning.textContent = error.message; list.append(warning);
+        }
+    }
+
     function openCommandPopup(anchor) {
         closePopup();
         const panel = createCommandPopup();
@@ -2158,6 +2395,9 @@ function init_per_chat(runtime) {
         const error = panel.querySelector('.tm-sc-persistent-command-error');
 
         panel.dataset.conversationId = context?.conversationId || '';
+        let selectedIds = [];
+        try { selectedIds = runtime.quickCommands.selectedIds(context?.conversationId || ''); } catch { /* The checklist displays the storage error. */ }
+        renderCommandChecks(selectedIds);
         input.value = savedCommand;
         error.hidden = Boolean(context?.conversationId);
         error.textContent = context?.conversationId
@@ -2289,6 +2529,14 @@ function init_per_chat(runtime) {
         scheduleEnsureMenuItems();
     }
 
+    runtime.quickCommands.subscribe(() => {
+        updateAllMenuItems();
+        if (commandPopup && !commandPopup.hidden) {
+            const ids = [...commandPopup.querySelectorAll('.tm-sc-quick-command-checks input:checked')].map(node => node.value);
+            renderCommandChecks(ids);
+            window.requestAnimationFrame(positionCommandPopup);
+        }
+    });
     installNetworkOverride();
     runtime.onDomReady(startUi);
     runtime.dom?.subscribe(scheduleEnsureMenuItems);
@@ -15758,9 +16006,10 @@ const gm = {
     delete: key => GM_deleteValue(key),
 };
 const store = createStore(MODULE_CATALOG, gm);
-const controls = createInterface({ store, catalog: MODULE_CATALOG, storage: localStorage, version: SUITE_VERSION });
+const quickCommands = createQuickCommands(gm);
+const controls = createInterface({ store, catalog: MODULE_CATALOG, storage: localStorage, version: SUITE_VERSION, quickCommands });
 GM_registerMenuCommand('SpicyChat Tools — настройки и перенос', controls.open);
-const runtime = { getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters(), models: QUICK_MODELS, nativeModels: createNativeModelAdapter(), onDomReady };
+const runtime = { quickCommands, getEndpoint: id => store.getEndpoint(id), dom: createDomAdapters(), models: QUICK_MODELS, nativeModels: createNativeModelAdapter(), onDomReady };
 const started = new Set();
 
 function startFeature(module) {
