@@ -97,3 +97,24 @@ test('backup round trip includes library, selected IDs and legacy manual text; d
     applyImport(planSuiteImport(backup, catalog), target, targetLocal);
     assert.equal(restored.active('one')[0].text, 'New text');
 });
+
+test('immediate checkbox writes leave manual text and other chats unchanged', () => {
+    const { api, gm, local } = fixture();
+    const id = api.upsert({ name: 'Command', text: 'Text' });
+    api.saveChat('one', [], 'Manual', local);
+    api.saveChat('two', [id], 'Other manual', local);
+    const manualBefore = local.getItem(MANUAL_COMMANDS_KEY);
+    api.setSelectedIds('one', [id]);
+    assert.deepEqual(api.snapshot('one').selectedIds, [id]);
+    assert.equal(api.active('two').length, 1);
+    assert.equal(local.getItem(MANUAL_COMMANDS_KEY), manualBefore);
+    api.setSelectedIds('one', []);
+    assert.deepEqual(api.selectedIds('one'), []);
+    assert.deepEqual(api.selectedIds('two'), [id]);
+    const before = gm.get(QUICK_COMMANDS_KEY);
+    const set = gm.set;
+    gm.set = () => { throw Error('Quota'); };
+    assert.throws(() => api.setSelectedIds('one', [id]), /Quota/);
+    gm.set = set;
+    assert.deepEqual(gm.get(QUICK_COMMANDS_KEY), before);
+});

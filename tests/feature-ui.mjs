@@ -1,4 +1,5 @@
 // Synthetic UI only: no exported conversation, account data, or live API requests.
+// The desktop message column leaves a right gutter for the requested floating panel.
 import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
@@ -11,7 +12,7 @@ const bot = '11111111-1111-4111-8111-111111111111';
 const chat = '22222222-2222-4222-8222-222222222222';
 const messages = ['33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'];
 const html = `<!doctype html><html><head><style>
-body{margin:32px;font:16px sans-serif}button,[role=menuitem]{padding:8px;cursor:pointer}textarea{width:500px;height:80px}[data-fixture-menu]{position:fixed;left:40px;top:100px;background:white;z-index:50;border:1px solid;min-width:240px}[role=menuitem]{display:block}#composer{margin-top:40px}.flex{display:flex}.relative{position:relative}[id^=message-]{margin:12px}
+body{margin:32px;font:16px sans-serif}button,[role=menuitem]{padding:8px;cursor:pointer}textarea{width:500px;height:80px}[data-fixture-menu]{position:fixed;left:40px;top:100px;background:white;z-index:50;border:1px solid;min-width:240px}[role=menuitem]{display:block}#composer{margin-top:40px}#thread{max-width:1000px}.flex{display:flex}.relative{position:relative}[id^=message-]{margin:12px}
 </style></head><body><button aria-label="chat-dropdown">Chat menu</button>
 <div id="thread">${messages.map((id, i) => `<div id="message-${id}"><div class="flex justify-between items-center gap-md${i ? ' flex-row-reverse' : ''}"><span>${i ? 'You' : 'Character'}</span><div class="relative"><button aria-label="message-dropdown">Message menu</button></div></div><div class="[overflow-wrap:anywhere]"><p>${i ? 'Second plain message' : 'First <em>formatted</em> message'}</p></div></div>`).join('')}</div>
 <div id="composer" class="flex items-end gap-sm w-full"><button aria-label="Plus-button">+</button><div data-tooltip-content="Generate image"><button aria-label="Generate image" data-testid="ImageGenerationButton">Image</button></div><div class="w-full flex"><div class="grow border-1 border-solid border-gray-5 rounded-[13px] py-sm px-2 bg-gray-3"><div class="flex flex-1 items-end gap-1"><textarea placeholder="Message..."></textarea></div></div></div><button aria-label="send-message">Send</button></div>
@@ -93,7 +94,7 @@ async function fixture(disabled = {}, seed = {}) {
             if (window.__inlineMenus) button.parentElement.append(menu); else document.body.append(menu);
         });
     }, { disabled, bot, chat, seed });
-    await page.addScriptTag({ content: bundle.replace("shadowMode = 'closed'", "shadowMode = 'open'") });
+    await page.addScriptTag({ content: bundle.replaceAll("shadowMode = 'closed'", "shadowMode = 'open'") });
     await page.locator('.tm-sc-emoji-trigger').waitFor();
     return page;
 }
@@ -102,8 +103,8 @@ await nativeOnly.evaluate(() => new Promise(resolve => requestAnimationFrame(() 
 assert.equal(await nativeOnly.locator('.tm-sc-response-length-menu-item, .tm-sc-persistent-command-menu-item').count(), 0, 'visible native image button must not be treated as an open menu');
 await nativeOnly.evaluate(() => { window.__plainMenus = true; });
 await nativeOnly.locator('[aria-label=Plus-button]').click();
-await nativeOnly.locator('.tm-sc-response-length-menu-item').waitFor();
-assert.equal(await nativeOnly.locator('[data-fixture-menu] .tm-sc-response-length-menu-item').count(), 1);
+await nativeOnly.locator('[data-fixture-menu]').waitFor();
+assert.equal(await nativeOnly.locator('.tm-sc-response-length-menu-item, .tm-sc-persistent-command-menu-item').count(), 0);
 await nativeOnly.locator('#thread').click({ position: { x: 2, y: 2 } });
 assert.equal(await nativeOnly.locator('.tm-sc-response-length-menu-item, .tm-sc-persistent-command-menu-item').count(), 0);
 scenarios.push('visible-native-image-control-is-not-a-menu');
@@ -132,48 +133,36 @@ assert.equal(await page.locator('.tm-sc-generate-image-shortcut').isVisible(), f
 await draft.fill(''); await page.locator('.tm-sc-generate-image-shortcut').click();
 await page.waitForFunction(() => __actions.image === 1);
 scenarios.push('persistent-lightbulb-with-draft', 'image-shortcut');
-await page.locator('[aria-label=Plus-button]').click();
-await page.locator('.tm-sc-response-length-menu-item').click();
-await page.locator('.tm-sc-response-length-slider').fill('420');
-await page.locator('.tm-sc-response-model-select').selectOption('deepseek-v4pro');
-await page.locator('.tm-sc-response-length-save').click();
-await page.locator('[aria-label=Plus-button]').click();
-await page.locator('.tm-sc-persistent-command-menu-item').click();
-await page.getByLabel('Текст постоянной команды', { exact: true }).fill('Fixture command');
-await page.locator('.tm-sc-persistent-command-save').click();
+const chatPanel = page.locator('#spchat-chat-panel');
+await chatPanel.locator('.tm-sc-response-length-slider').fill('420');
+await chatPanel.locator('.tm-sc-response-model-select').selectOption('deepseek-v4pro');
+await chatPanel.locator('.manual > summary').click();
+await chatPanel.getByLabel('Текст постоянной команды', { exact: true }).fill('Fixture command');
 await page.evaluate(async chat => {
     await fetch('https://prod.nd-api.com/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer synthetic-session' }, body: JSON.stringify({ conversation_id: chat, message: 'Hello', inference_model: 'qwenplus-character', inference_settings: { max_new_tokens: 200 } }) });
 }, chat);
 const generated = JSON.parse(requests.findLast(req => req.url.endsWith('/chat') && req.method === 'POST').body);
 assert.equal(generated.inference_settings.max_new_tokens, 420); assert.equal(generated.inference_model, 'deepseek-v4pro'); assert.equal(generated.message, 'Hello\n\n/cmd Fixture command');
-scenarios.push('plus-portal-token-model-command-settings', 'generation-request-rewrite');
-// Dismissal must leave no copies beside the input or hidden native controls.
-for (const item of ['.tm-sc-response-length-menu-item', '.tm-sc-persistent-command-menu-item']) {
-    const popup = item.includes('persistent') ? '#tm-sc-persistent-command-popup' : '#tm-sc-response-length-popup';
-    await page.locator('[aria-label=Plus-button]').click();
-    await page.locator(item).waitFor();
-    assert.equal(await page.locator('[role=menu] ' + item).count(), 1);
-    await page.locator(item).click();
-    await page.locator(popup).waitFor({ state: 'visible' });
-    await page.locator(popup + ' h2').click();
-    assert.equal(await page.locator(popup).isVisible(), true, 'clicks inside must keep the popup open');
-    await page.locator('#thread').click({ position: { x: 2, y: 2 } });
-    await page.locator(popup).waitFor({ state: 'hidden' });
-    assert.equal(await page.locator('.tm-sc-response-length-menu-item, .tm-sc-persistent-command-menu-item').count(), 0);
-    await page.locator('[aria-label=Plus-button]').click(); await page.locator(item).click();
-    await page.locator(popup).waitFor({ state: 'visible' });
-    await page.evaluate(() => document.querySelector('#thread').click());
-    await page.locator(popup).waitFor({ state: 'hidden' });
-    await page.locator('[aria-label=Plus-button]').click(); await page.locator(item).click();
-    await page.locator(popup).waitFor({ state: 'visible' }); await page.keyboard.press('Escape');
-    await page.locator(popup).waitFor({ state: 'hidden' });
-}
+await chatPanel.locator('.tm-sc-response-model-select').selectOption('');
+await chatPanel.getByRole('button', { name: 'Как на сайте', exact: true }).click();
+await page.evaluate(async chat => fetch('https://prod.nd-api.com/chat', { method: 'POST', body: JSON.stringify({ conversation_id: chat, inference_model: 'qwenplus-character', inference_settings: { max_new_tokens: 200 }, message: 'Site defaults' }) }), chat);
+const defaults = JSON.parse(requests.findLast(req => req.url.endsWith('/chat') && req.method === 'POST').body);
+assert.equal(defaults.inference_model, 'qwenplus-character'); assert.equal(defaults.inference_settings.max_new_tokens, 200);
+await chatPanel.locator('.tm-sc-response-model-select').selectOption('deepseek-v4pro');
+await chatPanel.locator('.tm-sc-response-length-slider').fill('420');
+scenarios.push('top-right-panel-token-model-command-autosave', 'generation-request-rewrite', 'per-chat-model-and-token-default-reset');
+// Persistent panel stays accessible while native menus retain dismissal.
+assert.equal(await chatPanel.getByRole('button', { name: 'Сохранить', exact: true }).count(), 0);
+await page.locator('#thread').click({ position: { x: 2, y: 2 } });
+assert.equal(await chatPanel.isVisible(), true);
+await page.keyboard.press('Escape');
+assert.equal(await chatPanel.isVisible(), true);
 await page.locator('[aria-label=Plus-button]').click();
-await page.locator('.tm-sc-response-length-menu-item').waitFor();
+await page.locator('[data-fixture-menu]').waitFor();
+assert.equal(await page.locator('.tm-sc-response-length-menu-item, .tm-sc-persistent-command-menu-item').count(), 0);
 await page.locator('#thread').click({ position: { x: 2, y: 2 } });
 await page.waitForFunction(() => !document.querySelector('[data-fixture-menu]'));
-assert.equal(await page.locator('.tm-sc-response-length-menu-item, .tm-sc-persistent-command-menu-item').count(), 0);
-scenarios.push('settings-and-command-outside-click', 'settings-click-only-dismissal', 'settings-escape', 'native-menu-dismissal-without-duplicates');
+scenarios.push('persistent-panel-and-no-plus-menu-duplicates', 'native-menu-dismissal-without-duplicates');
 
 await page.locator(`#message-${messages[0]} [aria-label=message-dropdown]`).click();
 await page.locator('.tm-sc-save-history-message').click();
@@ -462,11 +451,9 @@ assert.equal(await modelPage.locator('[data-native-model="mimo-v26-pro"] .lucide
 await modelPage.locator('[data-native-model="mimo-v26-pro"]').click();
 assert.equal(await modelPage.evaluate(() => __exploreClicks), 0);
 scenarios.push('four-ordered-native-models', 'react-native-mimo-selection-without-full-chooser', 'native-model-persistence-toast-and-dismissal', 'selected-check-on-reopen-and-react-alternate-update', 'native-model-handlers-retained', 'model-menu-reopen-and-native-deduplication', 'mimo-keyboard-selection');
-await modelPage.locator('[aria-label=Plus-button]').click();
-await modelPage.locator('.tm-sc-response-length-menu-item').click();
+
 assert.deepEqual(await modelPage.locator('.tm-sc-response-model-select option').allTextContents(), ['Как выбрано на сайте', ...quickModelNames]);
 await modelPage.locator('.tm-sc-response-model-select').selectOption('mimo-v26-pro');
-await modelPage.locator('.tm-sc-response-length-save').click();
 assert.deepEqual(await modelPage.evaluate(() => JSON.parse(localStorage.getItem('tm-sc-per-chat-inference-model-v1'))), { 'old-conversation': 'glm45', [chat]: 'mimo-v26-pro' });
 await modelPage.evaluate(async chat => fetch('https://prod.nd-api.com/chat', { method: 'POST', body: JSON.stringify({ conversation_id: chat, inference_model: 'glm51', message: 'Model test' }) }), chat);
 assert.equal(JSON.parse(requests.findLast(req => req.url.endsWith('/chat') && req.method === 'POST').body).inference_model, 'mimo-v26-pro');
@@ -479,11 +466,12 @@ await commandsPage.evaluate(({ chat, otherChat }) => {
 }, { chat, otherChat });
 const settings = commandsPage.locator('#spchat-tools-settings');
 const manager = settings.locator('section').filter({ has: commandsPage.locator('[name=quick-command-name]') });
-const commandPopup = commandsPage.locator('#tm-sc-persistent-command-popup');
+const commandPopup = commandsPage.locator('#spchat-chat-panel');
 async function openCommands() {
-    await commandsPage.locator('[aria-label=Plus-button]').click();
-    await commandsPage.locator('.tm-sc-persistent-command-menu-item').click();
     await commandPopup.waitFor({ state: 'visible' });
+    await commandsPage.waitForFunction(() => document.querySelector('#spchat-chat-panel')?.dataset.scConversation === location.pathname.split('/').at(-1));
+    if ((await commandPopup.locator('.panel').getAttribute('open')) === null) await commandPopup.locator('.heading').click();
+    if ((await commandPopup.locator('.manual').getAttribute('open')) === null) await commandPopup.locator('.manual > summary').click();
 }
 async function addQuick(name, text) {
     await manager.getByLabel('Название команды', { exact: true }).fill(name);
@@ -510,8 +498,7 @@ assert.equal(await commandPopup.getByLabel('Текст постоянной ко
 assert.equal(await commandPopup.getByRole('checkbox').count(), 3);
 await commandPopup.getByRole('checkbox', { name: 'First <b>title</b>', exact: true }).check();
 await commandPopup.getByRole('checkbox', { name: 'Second quick', exact: true }).check();
-assert.equal(await generateCommands(), 'Commands test\n\n/cmd Existing manual', 'checkbox drafts do not apply until Save');
-await commandPopup.locator('.tm-sc-persistent-command-save').click();
+assert.equal(await commandPopup.getByRole('button', { name: 'Сохранить', exact: true }).count(), 0);
 const separateCommands = 'Commands test\n\n/cmd Existing manual\n\n/cmd First quick text\n\n/cmd Second quick text';
 assert.equal(await generateCommands(), separateCommands);
 await openCommands();
@@ -519,14 +506,21 @@ assert.equal(await commandPopup.getByRole('checkbox', { name: 'First <b>title</b
 assert.equal(await commandPopup.getByRole('checkbox', { name: 'Second quick', exact: true }).isChecked(), true);
 assert.equal(await commandPopup.getByRole('checkbox', { name: 'Not selected', exact: true }).isChecked(), false);
 await commandPopup.getByRole('checkbox', { name: 'Second quick', exact: true }).uncheck();
+assert.equal(await generateCommands(), 'Commands test\n\n/cmd Existing manual\n\n/cmd First quick text', 'a checkbox applies immediately');
 await commandsPage.keyboard.press('Escape');
-assert.equal(await generateCommands(), separateCommands, 'Escape discards an unsaved checkbox change');
-await commandsPage.evaluate(({ bot, otherChat }) => history.pushState(null, '', `/chat/${bot}/${otherChat}`), { bot, otherChat });
+assert.equal(await generateCommands(), 'Commands test\n\n/cmd Existing manual\n\n/cmd First quick text', 'Escape does not undo autosaved changes');
+await commandPopup.getByRole('checkbox', { name: 'Second quick', exact: true }).check();
+const modelsBeforeNavigation = await commandsPage.evaluate(() => localStorage.getItem('tm-sc-per-chat-inference-model-v1'));
+await commandsPage.evaluate(({ bot, otherChat }) => {
+    history.pushState(null, '', `/chat/${bot}/${otherChat}`);
+    const select = document.querySelector('#spchat-chat-panel').shadowRoot.querySelector('select');
+    select.value = 'glm51'; select.dispatchEvent(new Event('change', { bubbles: true }));
+}, { bot, otherChat });
+assert.equal(await commandsPage.evaluate(() => localStorage.getItem('tm-sc-per-chat-inference-model-v1')), modelsBeforeNavigation, 'a stale control must not save into the newly opened chat');
 await openCommands();
 assert.equal(await commandPopup.getByLabel('Текст постоянной команды', { exact: true }).inputValue(), 'Other manual');
 assert.equal(await commandPopup.locator('input:checked').count(), 0);
 await commandPopup.getByRole('checkbox', { name: 'Not selected', exact: true }).check();
-await commandPopup.locator('.tm-sc-persistent-command-save').click();
 assert.equal(await generateCommands(otherChat), 'Commands test\n\n/cmd Other manual\n\n/cmd Do not send');
 assert.equal(await generateCommands(chat), separateCommands, 'another chat does not change the first selection');
 await commandsPage.evaluate(({ bot, chat }) => history.pushState(null, '', `/chat/${bot}/${chat}`), { bot, chat });
@@ -538,9 +532,10 @@ await manager.getByLabel('Текст команды', { exact: true }).fill('Cha
 await manager.getByRole('button', { name: 'Сохранить команду', exact: true }).click();
 await manager.locator('.quick-command-card').filter({ hasText: 'Second quick' }).getByRole('button', { name: 'Удалить', exact: true }).click();
 assert.equal(await manager.locator('.quick-command-card').count(), 2);
-const downloadReady = commandsPage.waitForEvent('download');
-await settings.getByRole('button', { name: 'Скачать копию настроек и данных', exact: true }).click();
-const downloaded = await downloadReady;
+const [downloaded] = await Promise.all([
+    commandsPage.waitForEvent('download', { timeout: 15000 }),
+    settings.getByRole('button', { name: 'Скачать копию настроек и данных', exact: true }).click(),
+]);
 const commandsBackup = JSON.parse(await readFile(await downloaded.path(), 'utf8'));
 assert.equal(commandsBackup.values['spchat-tweaks:quick-commands:v1'].commands.length, 2);
 assert.equal(commandsBackup.values['spchat-tweaks:quick-commands:v1'].selections[chat].length, 1);
@@ -550,17 +545,61 @@ await openCommands();
 assert.equal(await commandPopup.getByRole('checkbox', { name: 'Renamed quick', exact: true }).isChecked(), true);
 assert.equal(await commandPopup.getByRole('checkbox', { name: 'Second quick', exact: true }).count(), 0);
 await commandsPage.setViewportSize({ width: 520, height: 700 });
-await commandPopup.locator('h2').click();
+await commandPopup.locator('.heading').click();
+assert.match(await commandPopup.locator('.compact').first().textContent(), /токенов|токены сайта/);
+assert.match(await commandPopup.locator('.compact').nth(1).textContent(), /Renamed quick/);
+assert.match(await commandPopup.locator('.compact').nth(2).textContent(), /Existing manual/);
+await commandsPage.screenshot({ path: new URL('../test-results/chat-panel-collapsed-' + browserName + '.png', import.meta.url).pathname });
+await commandPopup.locator('.heading').click();
 const commandBounds = await commandPopup.boundingBox();
 assert.ok(commandBounds.x >= 0 && commandBounds.x + commandBounds.width <= 520 && commandBounds.height <= 676);
 await commandsPage.screenshot({ path: new URL('../test-results/quick-commands-' + browserName + '.png', import.meta.url).pathname });
-await commandPopup.locator('.tm-sc-persistent-command-delete').click();
+await commandPopup.getByLabel('Текст постоянной команды', { exact: true }).fill('');
 assert.equal(await generateCommands(), 'Commands test\n\n/cmd Changed quick text', 'manual deletion retains checked quick commands');
 await openCommands();
 await commandPopup.getByRole('checkbox', { name: 'Renamed quick', exact: true }).uncheck();
-await commandPopup.locator('.tm-sc-persistent-command-save').click();
 assert.equal(await generateCommands(), 'Commands test', 'empty manual plus no checks disables all commands');
-scenarios.push('quick-command-library-create-edit-delete', 'multiple-independent-cmds-and-manual-preserved', 'quick-command-save-escape-and-chat-isolation', 'quick-command-edit-delete-applies-without-retoggling', 'quick-command-backup-and-mobile-layout');
+// Typing persists synchronously, without blur or a Save button.
+await commandPopup.getByLabel('Текст постоянной команды', { exact: true }).pressSequentially('Typed manual');
+assert.equal(await generateCommands(), 'Commands test\n\n/cmd Typed manual');
+await commandsPage.evaluate(() => { window.__pageEnter = 0; document.addEventListener('keydown', event => { if (event.key === 'Enter') __pageEnter++; }); });
+await commandPopup.getByLabel('Текст постоянной команды', { exact: true }).press('Enter');
+assert.equal(await commandsPage.evaluate(() => __pageEnter), 0, 'typing a command must not trigger page-level send shortcuts');
+await commandPopup.getByLabel('Текст постоянной команды', { exact: true }).pressSequentially('Second line');
+assert.equal(await generateCommands(), 'Commands test\n\n/cmd Typed manual\nSecond line');
+await commandPopup.getByLabel('Текст постоянной команды', { exact: true }).fill('Typed manual');
+const modelBeforeFailure = await commandPopup.locator('select').inputValue();
+await commandsPage.evaluate(() => {
+    window.__storageSet = Storage.prototype.setItem;
+    Storage.prototype.setItem = function(key, value) {
+        if (key === 'tm-sc-per-chat-inference-model-v1') throw Error('Fixture quota');
+        return __storageSet.call(this, key, value);
+    };
+});
+await commandPopup.locator('select').selectOption('glm51');
+await commandPopup.getByRole('status').filter({ hasText: 'Не удалось сохранить модель' }).waitFor();
+assert.equal(await commandPopup.locator('select').inputValue(), modelBeforeFailure, 'a failed save restores the actual selected model');
+await commandsPage.evaluate(() => { Storage.prototype.setItem = __storageSet; });
+await commandPopup.locator('select').selectOption('glm51');
+assert.equal(await commandPopup.getByRole('status').textContent(), '');
+await commandsPage.evaluate(() => document.querySelector('#spchat-chat-panel').remove());
+await commandPopup.waitFor({ state: 'visible' });
+assert.equal(await commandsPage.locator('#spchat-chat-panel').count(), 1);
+await commandsPage.evaluate(() => history.pushState(null, '', '/'));
+await commandPopup.waitFor({ state: 'hidden' });
+await commandsPage.evaluate(({ bot, chat }) => history.pushState(null, '', `/chat/${bot}/${chat}`), { bot, chat });
+await openCommands();
+assert.equal(await commandPopup.getByLabel('Текст постоянной команды', { exact: true }).inputValue(), 'Typed manual');
+assert.equal(await commandPopup.locator('select').inputValue(), 'glm51');
+scenarios.push('immediate-manual-typing-no-blur', 'panel-save-failure-restores-state', 'spa-navigation-guard-and-panel-remount');
+scenarios.push('quick-command-library-create-edit-delete', 'multiple-independent-cmds-and-manual-preserved', 'quick-command-autosave-and-chat-isolation', 'quick-command-edit-delete-applies-without-retoggling', 'quick-command-backup-and-mobile-layout');
 assert.deepEqual(errors, []);
 console.log(JSON.stringify({ result: 'PASS', scenarios, errors }));
+} catch (error) {
+    console.error(JSON.stringify({ uiErrors: errors }));
+    const current = browser.contexts().flatMap(context => context.pages()).at(-1);
+    if (current) {
+        try { await current.screenshot({ path: new URL('../test-results/feature-failure-' + browserName + '.png', import.meta.url).pathname, timeout: 3000 }); } catch {}
+    }
+    throw error;
 } finally { await browser.close(); }

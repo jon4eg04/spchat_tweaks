@@ -44,6 +44,20 @@ export function createQuickCommands(gm) {
     return {
         list: () => read().commands,
         selectedIds: conversation => selected(read(), conversation),
+        snapshot(conversation) {
+            const data = read();
+            return { commands: data.commands, selectedIds: selected(data, conversation) };
+        },
+        setSelectedIds(conversation, ids) {
+            if (typeof conversation !== 'string' || !conversation.trim()) throw new Error('Открой конкретный сохранённый диалог.');
+            if (!Array.isArray(ids) || ids.some(id => typeof id !== 'string')) throw new Error('Не удалось прочитать выбранные команды.');
+            const data = read();
+            const known = new Set(data.commands.map(command => command.id));
+            const chosen = [...new Set(ids)].filter(id => known.has(id));
+            if (chosen.length) data.selections[conversation] = chosen;
+            else delete data.selections[conversation];
+            write(data);
+        },
         active(conversation) {
             const data = read();
             const ids = new Set(selected(data, conversation));

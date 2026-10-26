@@ -6,14 +6,14 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Current implementation
 
-- Version 1.0.8. Public source and installation files in this repository.
+- Version 1.0.9. Public source and installation files in this repository.
 - User requested no personal-name attribution anywhere in published files. The author header is omitted, AGENTS.md forbids future personal-name attribution, and public-file checks reject author headers.
 - Added hide-models, based on the user's Hide selected model blocks v1.1: hides Qwen3 235B 2507 and Codex 24B, handles dynamically inserted paragraphs and text changes, and restores a hidden row if the site reuses it for another model. Independently toggled and enabled by default on upgrade.
 - The additional legacy hider is optional in ZIP migration. Original eleven-script backups are still complete; no repeated import is needed for already-migrated users.
 - The user reports the initial migration appears to work. The per-chat feature has a custom model dropdown; its current choices share src/core/models.js with the native quick menu. A separate historical script adding a model to the site's native selector has not been found in saved files/history; do not invent one.
 - Original modules remain separate source files with stable data keys. Version 1.0.3 adds shared native-menu discovery for inline and portal layouts, role-based items and text/icon fallbacks. Bookmarks no longer require saved-texts, and saving a history message no longer requires quick-delete. Menu ownership follows the selected message even when a portal is reused.
 - Version 1.0.4 fixes a 1.0.3 regression: a visible native image button was mistaken for a plus menu, inserting token/model and command items beside the composer. Discovery now rejects individual buttons, tooltip-only wrappers, composer ancestors and closed/hidden menus. Unmarked plus menus require multiple native actions including search/command. The old broad per-chat and chat-menu fallbacks are removed.
-- Response/CMD popups dismiss on window-captured pointerdown and click, including click-only activation and site handlers that stop propagation.
+- In 1.0.9 the former response/CMD popups are replaced by a persistent top-right panel, per the new user request. Older dismissal rules apply only to the historical popup versions.
 - Composer controls and per-chat settings use the shared menu adapter. Per-chat network interception still targets unsafeWindow, while its UI uses the userscript window. A settings-UI startup exception cannot block DOM-phase features. Custom menu buttons omit other features' service classes to prevent gallery/bookmark collisions.
 - Summary and Inworld TTS were deliberately excluded from the 1.0.3 feature audit and remain unchanged.
 - A dependency-free Node.js builder links sources into dist/spicychat-tools.user.js; a small meta.js provides update metadata.
@@ -42,7 +42,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Next steps
 
-The user updates the combined script to 1.0.8 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Verify native MiMo selection in the real account; local/browser CI uses synthetic site handlers.
+The user updates the combined script to 1.0.9 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Verify panel placement in the real account after updating; local/browser CI uses synthetic site handlers.
 
 ## Full original-source audit (1.0.5)
 
@@ -83,3 +83,12 @@ The user updates the combined script to 1.0.8 and reloads SpicyChat. No repeated
 - Manual data stays in the original localStorage key. Saving manual text and GM choices rolls back both resources on failure, including partially written values. No existing module data is moved or deleted. Library corruption refuses writes/import and does not erase data. The network path preserves the existing manual command if the new library cannot be read.
 - JSON suite backup schema remains 1 and includes the new allowlisted GM key, with strict validation on import and normal skip-existing/overwrite semantics. A same-named page-local key is excluded. No library text, selection, handler address or credentials are published in the repo.
 - Tests: six command-library/storage/import unit scenarios plus request interception with independent CMDs through fetch/XHR. Browser scenarios cover actual CRUD UI, literal text labels, draft save/Escape, multiple selections, per-chat isolation, edit/delete while selected, manual deletion, all-disabled state, backup export and 520px layout. Full suite checks still include all original modules and native MiMo selection in Chromium/Firefox. No live authenticated backend calls.
+
+## Persistent per-chat panel (1.0.9)
+
+- User explicitly moved response/model and command settings out of plus into a permanently available top-right panel. Existing plus items/popups and their CSS are removed from per-chat; other native/menu feature integration remains unchanged. src/core/chat-panel.js owns UI, while per-chat retains storage/request logic and early synchronous interceptors.
+- Model select, 100–500 token slider, quick-command checkboxes and manual text persist immediately; no save button/draft cancellation. Manual typing is synchronous with each input so immediately sending a message uses the latest text. Each manual/preset still produces a separate /cmd. Emptying manual affects only manual; setSelectedIds writes only GM and never rewrites manual. Existing keys, selections, library IDs and backup schema are retained.
+- Panel is fixed top-right below the header, with a closed shadow root, bounded viewport height, scrollable command list and optional collapse. Collapsed summary retains model/tokens/names/manual preview. Controls are reconciled by stable command ID to preserve checkbox focus. The full manual editor is optional; beginning is always visible. Site-default model and token reset are supported; historic glm45 overrides are preserved.
+- Refresh follows library changes, relevant storage/navigation/DOM state and a 500ms timer (covers pushState/replaceState and GM changes without wrapping history). Every commit validates the displayed conversation against current URL before writing. Panel hides outside saved chat routes and remounts the same host if removed. Read/save errors are displayed and failed choice controls refresh from persisted data. Manual writes refuse malformed existing JSON rather than wiping it.
+- Keyboard events inside panel stop bubbling so Enter in the manual textarea does not reach page-level send shortcuts. No new grant, endpoint, credential or runtime dependency.
+- Tests cover immediate changes/request rewrite, site-default resets, no old plus duplicates/save buttons, stable selection on library edits/deletes, route-switch race guard, chat isolation, collapse summaries/mobile bounds, immediate multiline typing, write failure/reversion, outside-chat hiding and host recovery. Other modules, native MiMo, migration and backups remain covered in both browsers. Desktop synthetic message column provides a right gutter for the requested floating widget; actual signed-in layout is not available.

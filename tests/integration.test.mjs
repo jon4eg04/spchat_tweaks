@@ -65,7 +65,7 @@ test('only the legacy hider runs on additional SpicyChat subdomains', async () =
         FEATURE_INITIALIZERS: Object.fromEntries(catalog.map(module => [module.id, () => calls.push(module.id)])),
         createStore: () => ({ settings: { active: true, modules: Object.fromEntries(catalog.map(module => [module.id, true])) } }),
         createInterface: () => ({ start() {}, open() {} }),
-        createDomAdapters: () => ({}), createNativeModelAdapter: () => ({}), createQuickCommands: () => ({}),
+        createDomAdapters: () => ({}), createNativeModelAdapter: () => ({}), createChatPanel: () => ({}), createQuickCommands: () => ({}),
         QUICK_MODELS, onDomReady: callback => callback(),
         location: { hostname: 'other.spicychat.ai' }, localStorage: {},
         document: { readyState: 'complete' }, GM_registerMenuCommand() {}, console,
@@ -82,7 +82,7 @@ test('a settings-window error cannot prevent composer features from starting', a
         FEATURE_INITIALIZERS: Object.fromEntries(catalog.map(module => [module.id, () => calls.push(module.id)])),
         createStore: () => ({ settings: { active: true, modules: Object.fromEntries(catalog.map(module => [module.id, true])) } }),
         createInterface: () => ({ start() { throw new Error('settings fixture failure'); }, open() {} }),
-        createDomAdapters: () => ({}), createNativeModelAdapter: () => ({}), createQuickCommands: () => ({}),
+        createDomAdapters: () => ({}), createNativeModelAdapter: () => ({}), createChatPanel: () => ({}), createQuickCommands: () => ({}),
         QUICK_MODELS, onDomReady: callback => callback(),
         location: { hostname: 'spicychat.ai' }, localStorage: {},
         document: { readyState: 'complete' }, GM_registerMenuCommand() {}, console: { error() {} },
@@ -123,4 +123,24 @@ test('each enabled quick command and manual command becomes a separate CMD in fe
     await send('one', 'Hello'); assert.equal(calls.at(-1).message, 'Hello\n\n/cmd Changed');
     quickCommands.saveChat('one', [], '', local);
     await send('one', 'Hello'); assert.equal(calls.at(-1).message, 'Hello');
+});
+
+test('panel manual autosave preserves other chats and refuses to overwrite malformed legacy data', async () => {
+    const source = await readFile(new URL('../src/modules/per-chat.js', import.meta.url), 'utf8');
+    const local = memory(), quickCommands = createQuickCommands(memory());
+    let panel;
+    vm.runInNewContext(source.replace('export default ', '') + '\ninit(runtime);', {
+        window: {}, unsafeWindow: {}, localStorage: local, URL, Symbol, console,
+        location: { origin: 'https://spicychat.ai', pathname: '/chat/bot/one' },
+        runtime: { quickCommands, models: QUICK_MODELS, onDomReady: callback => callback(), createChatPanel: options => { panel = options; return { refresh() {} }; } },
+    });
+    const key = 'tm-sc-per-chat-persistent-command-v1';
+    local.setItem(key, JSON.stringify({ two: 'Other manual', extra: { preserved: true } }));
+    panel.save.manual('one', '/cmd New text');
+    assert.deepEqual(JSON.parse(local.getItem(key)), { one: 'New text', two: 'Other manual', extra: { preserved: true } });
+    panel.save.manual('one', '');
+    assert.equal(JSON.parse(local.getItem(key)).two, 'Other manual');
+    local.setItem(key, 'broken JSON');
+    assert.throws(() => panel.save.manual('one', 'Do not replace'), /Данные не изменены/);
+    assert.equal(local.getItem(key), 'broken JSON');
 });
