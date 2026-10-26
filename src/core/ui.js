@@ -228,7 +228,7 @@ export function createInterface({ store, catalog, storage, version, reload = () 
         }
         features.append(grid);
 
-        const commands = section('Быстрые команды', 'Общая библиотека для всех чатов. В меню «+ → Постоянная команда» отметь нужные для конкретного диалога. /cmd вводить не нужно. Изменения библиотеки сохраняются сразу. Удаление убирает команду из всех чатов.');
+        const commands = section('Быстрые команды', 'Общая библиотека для всех чатов. В панели «Настройки чата» справа вверху отметь нужные для конкретного диалога. /cmd вводить не нужно. Изменения библиотеки сохраняются сразу. Удаление убирает команду из всех чатов.');
         commandManager = createCommandManager({ container: commands, library: quickCommands });
 
         const endpoints = section('Обработчики', 'Адреса и токены сохраняются в Tampermonkey. При переносе они подхватятся из старых скриптов.');

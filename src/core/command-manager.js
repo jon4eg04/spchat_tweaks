@@ -1,4 +1,4 @@
-// The library editor belongs to SC Tools; chat popups only choose saved entries.
+// The library editor belongs to SC Tools; the chat panel only chooses saved entries.
 export function createCommandManager({ container, library }) {
     let editing = null;
     const list = document.createElement('div'); list.className = 'quick-command-list';
