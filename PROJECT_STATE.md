@@ -6,7 +6,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Current implementation
 
-- Version 1.0.10. Public source and installation files in this repository.
+- Version 1.0.11. Public source and installation files in this repository.
 - User requested no personal-name attribution anywhere in published files. The author header is omitted, AGENTS.md forbids future personal-name attribution, and public-file checks reject author headers.
 - Added hide-models, based on the user's Hide selected model blocks v1.1: hides Qwen3 235B 2507 and Codex 24B, handles dynamically inserted paragraphs and text changes, and restores a hidden row if the site reuses it for another model. Independently toggled and enabled by default on upgrade.
 - The additional legacy hider is optional in ZIP migration. Original eleven-script backups are still complete; no repeated import is needed for already-migrated users.
@@ -42,7 +42,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Next steps
 
-The user updates the combined script to 1.0.10 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Verify panel placement in the real account after updating; local/browser CI uses synthetic site handlers.
+The user updates the combined script to 1.0.11 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Verify panel placement in the real account after updating; local/browser CI uses synthetic site handlers.
 
 ## Full original-source audit (1.0.5)
 
@@ -92,3 +92,8 @@ The user updates the combined script to 1.0.10 and reloads SpicyChat. No repeate
 - Refresh follows library changes, relevant storage/navigation/DOM state and a 500ms timer (covers pushState/replaceState and GM changes without wrapping history). Every commit validates the displayed conversation against current URL before writing. Panel hides outside saved chat routes and remounts the same host if removed. Read/save errors are displayed and failed choice controls refresh from persisted data. Manual writes refuse malformed existing JSON rather than wiping it.
 - Keyboard events inside panel stop bubbling so Enter in the manual textarea does not reach page-level send shortcuts. No new grant, endpoint, credential or runtime dependency.
 - Tests cover immediate changes/request rewrite, site-default resets, no old plus duplicates/save buttons, stable selection on library edits/deletes, route-switch race guard, chat isolation, collapse summaries/mobile bounds, immediate multiline typing, write failure/reversion, outside-chat hiding and host recovery. Other modules, native MiMo, migration and backups remain covered in both browsers. Desktop synthetic message column provides a right gutter for the requested floating widget; actual signed-in layout is not available.
+
+## Compact panel and 300-token ceiling (1.0.11)
+
+- User requested a 30px narrower, shorter panel, a 300-token slider maximum, and no shadows on either the chat panel or SC Tools launcher. Desktop width is 260px (was 290), small-screen width 250px (was 280); vertical spacing, command list and manual textarea heights are reduced. Only these two shadows are removed.
+- Per-chat token normalization now caps at 300, including legacy saved values above 300, so UI, displayed state and outgoing requests agree. Existing raw values are not bulk-rewritten. Model/command data, autosave and backup format remain unchanged. Existing request-interception fixtures deliberately retain legacy 420/440 values to verify the effective cap; UI interaction uses 280.

@@ -93,7 +93,7 @@ assert.equal(await active.locator('#qwen-row').evaluate(node => node.style.getPr
 await active.evaluate(async () => {
     await fetch('https://prod.nd-api.com/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer fixture-local-value' }, body: JSON.stringify({ conversation_id: 'conversation-fixture', message: 'Hello', inference_settings: { max_new_tokens: 200 } }) });
 });
-assert.equal(apiRequests.at(-1).inference_settings.max_new_tokens, 420);
+assert.equal(apiRequests.at(-1).inference_settings.max_new_tokens, 300);
 assert.equal(apiRequests.at(-1).message, 'Hello\n\n/cmd fixture-command');
 const disabled = await context.newPage();
 disabled.on('pageerror', error => errors.push(error.message));

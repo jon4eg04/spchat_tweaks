@@ -149,7 +149,7 @@ export function createInterface({ store, catalog, storage, version, reload = () 
             button:disabled { opacity: .5; cursor: default; }
             .primary { background: #7463d9; border-color: #9a8cec; }
             .primary:hover { background: #8674eb; }
-            .launcher { position: fixed; right: 18px; bottom: 18px; z-index: 2147483646; box-shadow: 0 5px 24px #0008; font-size: 12px; }
+            .launcher { position: fixed; right: 18px; bottom: 18px; z-index: 2147483646; box-shadow: none; font-size: 12px; }
             .backdrop { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center; padding: 20px; background: #080912aa; }
             .panel { width: min(760px, 100%); max-height: calc(100dvh - 40px); overflow: auto; background: #1b1d28; color: #f4f4fa; border: 1px solid #444457; border-radius: 16px; box-shadow: 0 24px 100px #0009; }
             header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid #36384a; }

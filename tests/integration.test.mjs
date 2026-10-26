@@ -37,10 +37,11 @@ test('per-chat module still overrides the page fetch and XHR after gaining a use
     const xhr = new XHR(); xhr.open('POST', 'https://prod.nd-api.com/chat'); xhr.send(body);
     assert.equal(calls.length, 2);
     for (const call of calls) {
-        assert.equal(call.inference_settings.max_new_tokens, 440);
+        assert.equal(call.inference_settings.max_new_tokens, 300);
         assert.equal(call.inference_model, 'mimo-v26-pro');
         assert.equal(call.message, 'Hello\n\n/cmd Keep this command');
     }
+    assert.equal(JSON.parse(storage.get('tm-sc-per-chat-response-length-v1')).conversation, 440, 'legacy values are capped without rewriting saved data');
 });
 
 test('all module files parse independently and the release has no runtime imports', async () => {

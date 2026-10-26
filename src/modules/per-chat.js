@@ -14,7 +14,7 @@ export default function init(runtime) {
     const COMMAND_STORAGE_KEY = 'tm-sc-per-chat-persistent-command-v1';
     const GENERATION_PATH = '/chat';
     const MIN_TOKENS = 100;
-    const MAX_TOKENS = 500;
+    const MAX_TOKENS = 300;
     const TOKEN_STEP = 20;
     const INITIAL_TOKENS = 300;
     const INFERENCE_MODELS = [

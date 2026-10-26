@@ -134,7 +134,8 @@ await draft.fill(''); await page.locator('.tm-sc-generate-image-shortcut').click
 await page.waitForFunction(() => __actions.image === 1);
 scenarios.push('persistent-lightbulb-with-draft', 'image-shortcut');
 const chatPanel = page.locator('#spchat-chat-panel');
-await chatPanel.locator('.tm-sc-response-length-slider').fill('420');
+assert.equal(await chatPanel.locator('input[type=range]').getAttribute('max'), '300');
+await chatPanel.locator('.tm-sc-response-length-slider').fill('280');
 await chatPanel.locator('.tm-sc-response-model-select').selectOption('deepseek-v4pro');
 await chatPanel.locator('.manual > summary').click();
 await chatPanel.getByLabel('Текст постоянной команды', { exact: true }).fill('Fixture command');
@@ -142,14 +143,14 @@ await page.evaluate(async chat => {
     await fetch('https://prod.nd-api.com/chat', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer synthetic-session' }, body: JSON.stringify({ conversation_id: chat, message: 'Hello', inference_model: 'qwenplus-character', inference_settings: { max_new_tokens: 200 } }) });
 }, chat);
 const generated = JSON.parse(requests.findLast(req => req.url.endsWith('/chat') && req.method === 'POST').body);
-assert.equal(generated.inference_settings.max_new_tokens, 420); assert.equal(generated.inference_model, 'deepseek-v4pro'); assert.equal(generated.message, 'Hello\n\n/cmd Fixture command');
+assert.equal(generated.inference_settings.max_new_tokens, 280); assert.equal(generated.inference_model, 'deepseek-v4pro'); assert.equal(generated.message, 'Hello\n\n/cmd Fixture command');
 await chatPanel.locator('.tm-sc-response-model-select').selectOption('');
 await chatPanel.getByRole('button', { name: 'Как на сайте', exact: true }).click();
 await page.evaluate(async chat => fetch('https://prod.nd-api.com/chat', { method: 'POST', body: JSON.stringify({ conversation_id: chat, inference_model: 'qwenplus-character', inference_settings: { max_new_tokens: 200 }, message: 'Site defaults' }) }), chat);
 const defaults = JSON.parse(requests.findLast(req => req.url.endsWith('/chat') && req.method === 'POST').body);
 assert.equal(defaults.inference_model, 'qwenplus-character'); assert.equal(defaults.inference_settings.max_new_tokens, 200);
 await chatPanel.locator('.tm-sc-response-model-select').selectOption('deepseek-v4pro');
-await chatPanel.locator('.tm-sc-response-length-slider').fill('420');
+await chatPanel.locator('.tm-sc-response-length-slider').fill('280');
 scenarios.push('top-right-panel-token-model-command-autosave', 'generation-request-rewrite', 'per-chat-model-and-token-default-reset');
 // Persistent panel stays accessible while native menus retain dismissal.
 assert.equal(await chatPanel.getByRole('button', { name: 'Сохранить', exact: true }).count(), 0);
