@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SpicyChat Tools
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
-// @version      1.0.10
+// @version      1.0.11
 // @description  Единый комплект из 12 функций SpicyChat с локальными настройками и переносом старых данных.
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
@@ -26,7 +26,7 @@
 (function () {
 'use strict';
 
-const SUITE_VERSION = "1.0.10";
+const SUITE_VERSION = "1.0.11";
 
 const MODULE_CATALOG = [
   {
@@ -878,7 +878,7 @@ function createInterface({ store, catalog, storage, version, reload = () => loca
             button:disabled { opacity: .5; cursor: default; }
             .primary { background: #7463d9; border-color: #9a8cec; }
             .primary:hover { background: #8674eb; }
-            .launcher { position: fixed; right: 18px; bottom: 18px; z-index: 2147483646; box-shadow: 0 5px 24px #0008; font-size: 12px; }
+            .launcher { position: fixed; right: 18px; bottom: 18px; z-index: 2147483646; box-shadow: none; font-size: 12px; }
             .backdrop { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center; padding: 20px; background: #080912aa; }
             .panel { width: min(760px, 100%); max-height: calc(100dvh - 40px); overflow: auto; background: #1b1d28; color: #f4f4fa; border: 1px solid #444457; border-radius: 16px; box-shadow: 0 24px 100px #0009; }
             header { display: flex; align-items: center; justify-content: space-between; padding: 20px 24px; border-bottom: 1px solid #36384a; }
@@ -1312,24 +1312,24 @@ function createChatPanel({ getContext, read, save, models, minTokens, maxTokens,
     const root = host.attachShadow({ mode: shadowMode });
     const style = document.createElement('style');
     style.textContent = `
-        :host { all: initial; position: fixed; right: 18px; top: 72px; z-index: 90; width: min(290px, calc(100vw - 24px)); color-scheme: dark; font: 13px/1.45 system-ui, sans-serif; color: #f1f1f6; }
+        :host { all: initial; position: fixed; right: 18px; top: 72px; z-index: 90; width: min(260px, calc(100vw - 24px)); color-scheme: dark; font: 13px/1.45 system-ui, sans-serif; color: #f1f1f6; }
         :host([hidden]), [hidden] { display: none !important; }
         * { box-sizing: border-box; }
-        details.panel { background: #22242ef2; border: 1px solid #484a5b; border-radius: 12px; box-shadow: 0 8px 28px #0005; max-height: calc(100dvh - 90px); overflow-y: auto; }
+        details.panel { background: #22242ef2; border: 1px solid #484a5b; border-radius: 12px; box-shadow: none; max-height: calc(100dvh - 90px); overflow-y: auto; }
         summary { cursor: pointer; }
-        .heading { padding: 12px 32px 12px 14px; position: relative; list-style: none; font-weight: 650; }
+        .heading { padding: 9px 30px 9px 12px; position: relative; list-style: none; font-weight: 650; }
         .heading::-webkit-details-marker { display: none; }
-        .heading::after { content: '▾'; position: absolute; right: 14px; top: 12px; }
+        .heading::after { content: '▾'; position: absolute; right: 12px; top: 9px; }
         .panel:not([open]) > .heading::after { content: '▸'; }
         .compact { display: block; color: #c5c5d5; font-size: 11px; font-weight: 400; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .panel[open] > .heading .compact { display: none; }
-        .body { padding: 0 14px 12px; }
-        .field { display: block; margin: 0 0 12px; }
-        .label { display: block; color: #c5c5d5; margin-bottom: 5px; }
+        .body { padding: 0 12px 8px; }
+        .field { display: block; margin: 0 0 8px; }
+        .label { display: block; color: #c5c5d5; margin-bottom: 3px; }
         select, textarea, button, input { font: inherit; }
-        select, textarea { width: 100%; color: #f4f4fa; background: #151720; border: 1px solid #505467; border-radius: 7px; padding: 8px; }
+        select, textarea { width: 100%; color: #f4f4fa; background: #151720; border: 1px solid #505467; border-radius: 7px; padding: 6px; }
         select { cursor: pointer; }
-        textarea { margin-top: 8px; min-height: 90px; resize: vertical; }
+        textarea { margin-top: 6px; min-height: 72px; resize: vertical; }
         input[type=range] { width: 100%; margin: 6px 0 0; accent-color: #a395f7; }
         input[type=checkbox] { accent-color: #a395f7; flex-shrink: 0; margin: 3px 0 0; }
         button { color: #d4ccff; cursor: pointer; background: transparent; border: 0; padding: 0; font-size: 11px; text-decoration: underline; }
@@ -1337,14 +1337,14 @@ function createChatPanel({ getContext, read, save, models, minTokens, maxTokens,
         .token-head { display: flex; justify-content: space-between; gap: 10px; }
         .token-head .label { margin: 0; }
         fieldset { min-inline-size: 0; margin: 0; padding: 0; border: 0; }
-        legend { color: #c5c5d5; margin-bottom: 5px; }
-        .commands { max-height: 180px; overflow-y: auto; }
-        .command { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; overflow-wrap: anywhere; cursor: pointer; }
-        .empty, .hint { color: #a7a8bb; font-size: 11px; margin: 6px 0; }
-        .manual { margin-top: 10px; }
+        legend { color: #c5c5d5; margin-bottom: 3px; }
+        .commands { max-height: 150px; overflow-y: auto; }
+        .command { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; overflow-wrap: anywhere; cursor: pointer; }
+        .empty, .hint { color: #a7a8bb; font-size: 11px; margin: 4px 0; }
+        .manual { margin-top: 8px; }
         .manual > summary { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #d4ccff; }
         .error { color: #ffb6ab; font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
-        @media(max-width: 540px) { :host { right: 12px; top: 64px; width: min(280px, calc(100vw - 24px)); } details.panel { max-height: calc(100dvh - 80px); } }
+        @media(max-width: 540px) { :host { right: 12px; top: 64px; width: min(250px, calc(100vw - 24px)); } details.panel { max-height: calc(100dvh - 80px); } }
     `;
     for (const type of ['keydown', 'keyup', 'keypress']) root.addEventListener(type, event => event.stopPropagation());
     const panel = document.createElement('details'); panel.className = 'panel'; panel.open = true;
@@ -1483,7 +1483,7 @@ function init_per_chat(runtime) {
     const COMMAND_STORAGE_KEY = 'tm-sc-per-chat-persistent-command-v1';
     const GENERATION_PATH = '/chat';
     const MIN_TOKENS = 100;
-    const MAX_TOKENS = 500;
+    const MAX_TOKENS = 300;
     const TOKEN_STEP = 20;
     const INITIAL_TOKENS = 300;
     const INFERENCE_MODELS = [
