@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SpicyChat Tools
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
-// @version      1.0.9
+// @version      1.0.10
 // @description  Единый комплект из 12 функций SpicyChat с локальными настройками и переносом старых данных.
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
@@ -26,7 +26,7 @@
 (function () {
 'use strict';
 
-const SUITE_VERSION = "1.0.9";
+const SUITE_VERSION = "1.0.10";
 
 const MODULE_CATALOG = [
   {
@@ -661,7 +661,7 @@ function exportSuite(store, catalog, localStorage) {
 
 // ---- src/core/command-manager.js ----
 
-// The library editor belongs to SC Tools; chat popups only choose saved entries.
+// The library editor belongs to SC Tools; the chat panel only chooses saved entries.
 function createCommandManager({ container, library }) {
     let editing = null;
     const list = document.createElement('div'); list.className = 'quick-command-list';
@@ -957,7 +957,7 @@ function createInterface({ store, catalog, storage, version, reload = () => loca
         }
         features.append(grid);
 
-        const commands = section('Быстрые команды', 'Общая библиотека для всех чатов. В меню «+ → Постоянная команда» отметь нужные для конкретного диалога. /cmd вводить не нужно. Изменения библиотеки сохраняются сразу. Удаление убирает команду из всех чатов.');
+        const commands = section('Быстрые команды', 'Общая библиотека для всех чатов. В панели «Настройки чата» справа вверху отметь нужные для конкретного диалога. /cmd вводить не нужно. Изменения библиотеки сохраняются сразу. Удаление убирает команду из всех чатов.');
         commandManager = createCommandManager({ container: commands, library: quickCommands });
 
         const endpoints = section('Обработчики', 'Адреса и токены сохраняются в Tampermonkey. При переносе они подхватятся из старых скриптов.');
