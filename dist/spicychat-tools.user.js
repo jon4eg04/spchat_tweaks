@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SpicyChat Tools
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
-// @version      1.0.12
+// @version      1.0.13
 // @description  Единый комплект из 12 функций SpicyChat с локальными настройками и переносом старых данных.
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
@@ -26,7 +26,7 @@
 (function () {
 'use strict';
 
-const SUITE_VERSION = "1.0.12";
+const SUITE_VERSION = "1.0.13";
 
 const MODULE_CATALOG = [
   {
@@ -15316,7 +15316,13 @@ for (const module of MODULE_CATALOG) if (module.phase === 'start') startFeature(
 function startDomFeatures() {
     if (store.settings.active && (location.hostname === 'spicychat.ai' || location.hostname === 'www.spicychat.ai')) {
         try {
-            GM_addStyle('hr.storyBookDivider[data-testid="BookExchangeDivider"] { background-color: #fff !important; }');
+            // The site's appearance rule is itself !important and has four class/attribute selectors.
+            GM_addStyle(`
+                hr.storyBookDivider[data-testid="BookExchangeDivider"],
+                .chat-appearance-scope[data-chat-appearance="on"] .storyBookLayout hr.storyBookDivider[data-testid="BookExchangeDivider"] {
+                    background-color: #fff !important;
+                }
+            `);
         } catch (error) { console.error('[SpicyChat Tools] Не удалось применить стиль разделителя.', error); }
     }
     try { controls.start(); }
