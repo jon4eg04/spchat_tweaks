@@ -24,6 +24,11 @@ function startFeature(module) {
 // Early interceptors run synchronously, before the site's first API requests.
 for (const module of MODULE_CATALOG) if (module.phase === 'start') startFeature(module);
 function startDomFeatures() {
+    if (store.settings.active && (location.hostname === 'spicychat.ai' || location.hostname === 'www.spicychat.ai')) {
+        try {
+            GM_addStyle('hr.storyBookDivider[data-testid="BookExchangeDivider"] { background-color: #fff !important; }');
+        } catch (error) { console.error('[SpicyChat Tools] Не удалось применить стиль разделителя.', error); }
+    }
     try { controls.start(); }
     catch (error) { console.error('[SpicyChat Tools] Не удалось открыть настройки. Остальные функции продолжают запуск.', error); }
     for (const module of MODULE_CATALOG) if (module.phase === 'dom') startFeature(module);

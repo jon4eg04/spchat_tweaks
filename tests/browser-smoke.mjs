@@ -15,7 +15,7 @@ const browser = await browserType.launch({ headless: true, firefoxUserPrefs: bro
 try {
 const errors = []; const apiRequests = [];
 const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
-await context.route('https://spicychat.ai/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><title>SpicyChat fixture</title></head><body><div style="display:flex"><div class="w-full flex"><textarea placeholder="Message..."></textarea></div></div><button aria-label="Plus-button">+</button><button aria-label="chat-dropdown">Menu</button></body></html>' }));
+await context.route('https://spicychat.ai/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><title>SpicyChat fixture</title><style>:root { --chat-appearance-separator: transparent; } hr.storyBookDivider { background-color: var(--chat-appearance-separator) !important; }</style></head><body><hr class="storyBookDivider" data-testid="BookExchangeDivider"><hr class="storyBookDivider" id="other-divider"><div style="display:flex"><div class="w-full flex"><textarea placeholder="Message..."></textarea></div></div><button aria-label="Plus-button">+</button><button aria-label="chat-dropdown">Menu</button></body></html>' }));
 await context.route('https://prod.nd-api.com/**', async route => {
     if (route.request().method() === 'POST') apiRequests.push(route.request().postDataJSON());
     await route.fulfill({ contentType: 'application/json', body: '{"ok":true}', headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' } });
@@ -40,6 +40,7 @@ await page.goto('https://spicychat.ai/chat/bot-fixture/conversation-fixture');
 await page.evaluate(() => localStorage.setItem('tm-sc-per-chat-persistent-command-v1', JSON.stringify({ fixture: 'saved command' })));
 await page.addScriptTag({ content: bundle.replace("shadowMode = 'closed'", "shadowMode = 'open'") });
 await page.getByRole('dialog').waitFor();
+assert.equal(await page.locator('hr[data-testid="BookExchangeDivider"]').evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)', 'inactive suite must not recolor the divider');
 assert.equal(await page.getByRole('checkbox').count(), catalog.length + 1);
 assert.equal(await page.locator('[name="summary-url"]').inputValue(), '');
 await page.screenshot({ path: root + 'test-results/settings.png' });
@@ -76,6 +77,16 @@ await active.evaluate(() => {
 });
 await active.addScriptTag({ content: bundle });
 await active.waitForFunction(() => document.querySelector('#tm-sc-emoji-trigger-wrap'));
+assert.equal(await active.locator('hr[data-testid="BookExchangeDivider"]').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(255, 255, 255)');
+assert.equal(await active.locator('#other-divider').evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)');
+await active.evaluate(() => {
+    const divider = document.createElement('hr');
+    divider.className = 'storyBookDivider';
+    divider.dataset.testid = 'BookExchangeDivider';
+    divider.id = 'dynamic-divider';
+    document.body.append(divider);
+});
+assert.equal(await active.locator('#dynamic-divider').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(255, 255, 255)');
 await active.waitForFunction(() => getComputedStyle(document.querySelector('#qwen-row')).display === 'none' && getComputedStyle(document.querySelector('#codex-row')).display === 'none');
 assert.notEqual(await active.locator('#allowed-row').evaluate(node => getComputedStyle(node).display), 'none');
 assert.notEqual(await active.locator('#outside-row').evaluate(node => getComputedStyle(node).display), 'none');

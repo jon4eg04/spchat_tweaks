@@ -6,7 +6,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Current implementation
 
-- Version 1.0.11. Public source and installation files in this repository.
+- Version 1.0.12. Public source and installation files in this repository.
 - User requested no personal-name attribution anywhere in published files. The author header is omitted, AGENTS.md forbids future personal-name attribution, and public-file checks reject author headers.
 - Added hide-models, based on the user's Hide selected model blocks v1.1: hides Qwen3 235B 2507 and Codex 24B, handles dynamically inserted paragraphs and text changes, and restores a hidden row if the site reuses it for another model. Independently toggled and enabled by default on upgrade.
 - The additional legacy hider is optional in ZIP migration. Original eleven-script backups are still complete; no repeated import is needed for already-migrated users.
@@ -42,7 +42,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Next steps
 
-The user updates the combined script to 1.0.11 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Verify panel placement in the real account after updating; local/browser CI uses synthetic site handlers.
+The user updates the combined script to 1.0.12 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Verify panel placement in the real account after updating; local/browser CI uses synthetic site handlers.
 
 ## Full original-source audit (1.0.5)
 
@@ -97,3 +97,8 @@ The user updates the combined script to 1.0.11 and reloads SpicyChat. No repeate
 
 - User requested a 30px narrower, shorter panel, a 300-token slider maximum, and no shadows on either the chat panel or SC Tools launcher. Desktop width is 260px (was 290), small-screen width 250px (was 280); vertical spacing, command list and manual textarea heights are reduced. Only these two shadows are removed.
 - Per-chat token normalization now caps at 300, including legacy saved values above 300, so UI, displayed state and outgoing requests agree. Existing raw values are not bulk-rewritten. Model/command data, autosave and backup format remain unchanged. Existing request-interception fixtures deliberately retain legacy 420/440 values to verify the effective cap; UI interaction uses 280.
+
+## White story-book divider (1.0.12)
+
+- User supplied `hr.storyBookDivider[data-testid="BookExchangeDivider"]` with a transparent `--chat-appearance-separator`. An active-suite CSS override sets its background to opaque white (`#fff !important`) on the main site only, including dynamically inserted dividers. No separate setting, storage change or change to other separators. Existing module styles are unchanged.
+- Browser smoke test asserts the original transparent color while inactive, opaque white while active and on dynamic insertion, and unchanged unrelated separators. Live account appearance still needs user verification.
