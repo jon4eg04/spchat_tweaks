@@ -15,7 +15,7 @@ const browser = await browserType.launch({ headless: true, firefoxUserPrefs: bro
 try {
 const errors = []; const apiRequests = [];
 const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
-await context.route('https://spicychat.ai/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><title>SpicyChat fixture</title><style>:root { --chat-appearance-separator: transparent; } hr.storyBookDivider { background-color: var(--chat-appearance-separator) !important; }</style></head><body><hr class="storyBookDivider" data-testid="BookExchangeDivider"><hr class="storyBookDivider" id="other-divider"><div style="display:flex"><div class="w-full flex"><textarea placeholder="Message..."></textarea></div></div><button aria-label="Plus-button">+</button><button aria-label="chat-dropdown">Menu</button></body></html>' }));
+await context.route('https://spicychat.ai/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head><title>SpicyChat fixture</title><style>:root { --chat-appearance-separator: transparent; } hr.storyBookDivider { background-color: var(--chat-appearance-separator) !important; } .chat-appearance-scope[data-chat-appearance="on"] .storyBookLayout .storyBookDivider { background-color: var(--chat-appearance-separator) !important; }</style></head><body><div class="chat-appearance-scope" data-chat-appearance="on"><div class="storyBookLayout"><hr class="storyBookDivider" data-testid="BookExchangeDivider"><hr class="storyBookDivider" id="other-divider"></div></div><div style="display:flex"><div class="w-full flex"><textarea placeholder="Message..."></textarea></div></div><button aria-label="Plus-button">+</button><button aria-label="chat-dropdown">Menu</button></body></html>' }));
 await context.route('https://prod.nd-api.com/**', async route => {
     if (route.request().method() === 'POST') apiRequests.push(route.request().postDataJSON());
     await route.fulfill({ contentType: 'application/json', body: '{"ok":true}', headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'authorization, content-type', 'access-control-allow-methods': 'GET, POST, OPTIONS' } });
@@ -84,9 +84,14 @@ await active.evaluate(() => {
     divider.className = 'storyBookDivider';
     divider.dataset.testid = 'BookExchangeDivider';
     divider.id = 'dynamic-divider';
-    document.body.append(divider);
+    document.querySelector('.storyBookLayout').append(divider);
+    const lateStyle = document.createElement('style');
+    lateStyle.textContent = '.chat-appearance-scope[data-chat-appearance="on"] .storyBookLayout .storyBookDivider { background-color: var(--chat-appearance-separator) !important; }';
+    document.head.append(lateStyle);
 });
 assert.equal(await active.locator('#dynamic-divider').evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(255, 255, 255)');
+assert.equal(await active.locator('hr[data-testid="BookExchangeDivider"]').first().evaluate(node => getComputedStyle(node).backgroundColor), 'rgb(255, 255, 255)');
+assert.equal(await active.locator('#other-divider').evaluate(node => getComputedStyle(node).backgroundColor), 'rgba(0, 0, 0, 0)');
 await active.waitForFunction(() => getComputedStyle(document.querySelector('#qwen-row')).display === 'none' && getComputedStyle(document.querySelector('#codex-row')).display === 'none');
 assert.notEqual(await active.locator('#allowed-row').evaluate(node => getComputedStyle(node).display), 'none');
 assert.notEqual(await active.locator('#outside-row').evaluate(node => getComputedStyle(node).display), 'none');

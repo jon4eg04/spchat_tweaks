@@ -26,7 +26,13 @@ for (const module of MODULE_CATALOG) if (module.phase === 'start') startFeature(
 function startDomFeatures() {
     if (store.settings.active && (location.hostname === 'spicychat.ai' || location.hostname === 'www.spicychat.ai')) {
         try {
-            GM_addStyle('hr.storyBookDivider[data-testid="BookExchangeDivider"] { background-color: #fff !important; }');
+            // The site's appearance rule is itself !important and has four class/attribute selectors.
+            GM_addStyle(`
+                hr.storyBookDivider[data-testid="BookExchangeDivider"],
+                .chat-appearance-scope[data-chat-appearance="on"] .storyBookLayout hr.storyBookDivider[data-testid="BookExchangeDivider"] {
+                    background-color: #fff !important;
+                }
+            `);
         } catch (error) { console.error('[SpicyChat Tools] Не удалось применить стиль разделителя.', error); }
     }
     try { controls.start(); }
