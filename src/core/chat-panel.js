@@ -1,5 +1,5 @@
 // Always-available per-conversation controls; persistence stays in the feature.
-export function createChatPanel({ getContext, read, save, models, minTokens, maxTokens, tokenStep, initialTokens, shadowMode = 'closed' }) {
+export function createChatPanel({ getContext, read, save, exportHistory, models, minTokens, maxTokens, tokenStep, initialTokens, shadowMode = 'closed' }) {
     const host = document.createElement('div'); host.id = 'spchat-chat-panel';
     const root = host.attachShadow({ mode: shadowMode });
     const style = document.createElement('style');
@@ -36,6 +36,11 @@ export function createChatPanel({ getContext, read, save, models, minTokens, max
         .manual { margin-top: 8px; }
         .manual > summary { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #d4ccff; }
         .error { color: #ffb6ab; font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
+        .chat-export { border-top: 1px solid #484a5b; margin-top: 8px; padding-top: 6px; }
+        .chat-export button:disabled { opacity: .65; cursor: default; }
+        .chat-export progress { display: block; width: 100%; height: 10px; margin: 4px 0; accent-color: #a395f7; }
+        .chat-export .hint { overflow-wrap: anywhere; }
+        .chat-export .is-error { color: #ffb6ab; }
         @media(max-width: 540px) { :host { right: 12px; top: 64px; width: min(250px, calc(100vw - 24px)); } details.panel { max-height: calc(100dvh - 80px); } }
     `;
     for (const type of ['keydown', 'keyup', 'keypress']) root.addEventListener(type, event => event.stopPropagation());
@@ -70,18 +75,92 @@ export function createChatPanel({ getContext, read, save, models, minTokens, max
     manualDetails.append(manualCaption, manual);
     const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = 'Сохраняется сразу · каждая команда — отдельная /cmd';
     const status = document.createElement('div'); status.className = 'error'; status.setAttribute('role', 'status');
-    body.append(modelLabel, tokenLabel, commandsField, manualDetails, hint, status); panel.append(heading, body); root.append(style, panel);
+    const exportSection = document.createElement('div'); exportSection.className = 'chat-export';
+    const exportButton = document.createElement('button'); exportButton.type = 'button'; exportButton.textContent = 'Скачать чат в JSON';
+    const exportProgress = document.createElement('progress'); exportProgress.max = 100; exportProgress.hidden = true;
+    exportProgress.setAttribute('aria-label', 'Прогресс выгрузки чата');
+    const exportStatus = document.createElement('p'); exportStatus.className = 'hint'; exportStatus.setAttribute('role', 'status'); exportStatus.hidden = true;
+    exportSection.append(exportButton, exportProgress, exportStatus);
+    body.append(modelLabel, tokenLabel, commandsField, manualDetails, hint, status, exportSection); panel.append(heading, body); root.append(style, panel);
 
     let conversation = '';
     let signature = '';
+    let exportRoute = '';
+    let exportJob = null;
     const rows = new Map();
     const errors = new Map();
     const preview = value => value.replace(/\s+/g, ' ').trim() || 'не задана';
     const showErrors = () => { const text = [...errors.values()].join(' '); if (status.textContent !== text) status.textContent = text; };
+    const routeKey = context => context?.conversationId ? `${context.characterId}/${context.conversationId}` : '';
+
+    function resetExport() {
+        exportJob?.abort();
+        exportJob = null;
+        exportButton.disabled = false;
+        exportProgress.hidden = true;
+        exportProgress.removeAttribute('value');
+        exportStatus.hidden = true;
+        exportStatus.textContent = '';
+        exportStatus.classList.remove('is-error');
+    }
+
+    async function downloadChat() {
+        const context = getContext();
+        const route = routeKey(context);
+        if (exportJob || !route || route !== exportRoute) return;
+        resetExport();
+        const job = new AbortController();
+        exportJob = job;
+        const isCurrent = () => exportJob === job && routeKey(getContext()) === route;
+        exportButton.disabled = true;
+        exportProgress.hidden = false;
+        exportStatus.hidden = false;
+        exportStatus.textContent = 'Подключаюсь к истории SpicyChat…';
+
+        try {
+            const history = await exportHistory(context, {
+                signal: job.signal,
+                onProgress(count, total) {
+                    if (!isCurrent()) return;
+                    if (total > 0) exportProgress.value = Math.min(95, 100 * count / total);
+                    exportStatus.textContent = `Загружено сообщений: ${count}${total > 0 ? ` из ${Math.max(count, total)}` : ''}`;
+                },
+            });
+            if (!isCurrent()) return;
+            const blob = new Blob([JSON.stringify(history, null, 2) + '\n'], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `spicychat-${context.conversationId}.json`;
+            link.hidden = true;
+            root.append(link);
+            try { link.click(); }
+            finally {
+                link.remove();
+                window.setTimeout(() => URL.revokeObjectURL(url), 10000);
+            }
+            exportProgress.value = 100;
+            exportStatus.textContent = `Выгрузка готова · сообщений: ${history.messages.length}`;
+        } catch (error) {
+            if (!isCurrent()) return;
+            exportProgress.hidden = true;
+            exportStatus.classList.add('is-error');
+            const reason = error?.name === 'TimeoutError' ? 'SpicyChat слишком долго отвечал.' : (error?.message || 'Неизвестная ошибка.');
+            exportStatus.textContent = `Не удалось скачать чат. ${reason}`;
+        } finally {
+            if (exportJob === job) {
+                exportJob = null;
+                exportButton.disabled = false;
+            }
+        }
+    }
 
     function refresh() {
         if (!host.isConnected && document.body) document.body.append(host);
-        const current = getContext()?.conversationId || '';
+        const context = getContext();
+        const current = context?.conversationId || '';
+        const route = routeKey(context);
+        if (route !== exportRoute) { exportRoute = route; resetExport(); }
         host.hidden = !current;
         if (!current) { conversation = ''; signature = ''; delete host.dataset.scConversation; return; }
         const changedChat = current !== conversation;
@@ -146,8 +225,10 @@ export function createChatPanel({ getContext, read, save, models, minTokens, max
     range.addEventListener('pointerup', () => commit('tokens', id => save.limit(id, Number(range.value))));
     siteTokens.addEventListener('click', event => { event.preventDefault(); commit('tokens', id => save.limit(id, null)); });
     manual.addEventListener('input', () => commit('manual', id => save.manual(id, manual.value)));
+    exportButton.addEventListener('click', downloadChat);
     window.addEventListener('storage', () => { signature = ''; refresh(); });
     window.addEventListener('popstate', refresh);
+    window.addEventListener('pagehide', resetExport);
     window.addEventListener('pageshow', refresh);
     // Covers pushState/replaceState and GM changes from other open tabs without
     // wrapping the site's history methods or exposing suite state to the page.

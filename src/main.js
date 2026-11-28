@@ -17,7 +17,11 @@ function startFeature(module) {
     if (!mainSite && !module.matchesSubdomains) return;
     if (!store.settings.active || !store.settings.modules[module.id]) return;
     if (started.has(module.id)) return;
-    try { FEATURE_INITIALIZERS[module.id](runtime); started.add(module.id); }
+    try {
+        if (module.id === 'per-chat' || module.id === 'summary') runtime.chatHistoryApi ??= createChatHistoryApi();
+        FEATURE_INITIALIZERS[module.id](runtime);
+        started.add(module.id);
+    }
     catch (error) { console.error(`[SpicyChat Tools] Не удалось запустить модуль ${module.id}.`, error); }
 }
 

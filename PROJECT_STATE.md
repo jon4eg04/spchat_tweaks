@@ -6,7 +6,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Current implementation
 
-- Version 1.0.13. Public source and installation files in this repository.
+- Version 1.0.14. Public source and installation files in this repository.
 - User requested no personal-name attribution anywhere in published files. The author header is omitted, AGENTS.md forbids future personal-name attribution, and public-file checks reject author headers.
 - Added hide-models, based on the user's Hide selected model blocks v1.1: hides Qwen3 235B 2507 and Codex 24B, handles dynamically inserted paragraphs and text changes, and restores a hidden row if the site reuses it for another model. Independently toggled and enabled by default on upgrade.
 - The additional legacy hider is optional in ZIP migration. Original eleven-script backups are still complete; no repeated import is needed for already-migrated users.
@@ -42,7 +42,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Next steps
 
-The user updates the combined script to 1.0.13 and reloads SpicyChat. No repeated migration is needed; existing data/configuration and module toggles are retained. Verify panel placement in the real account after updating; local/browser CI uses synthetic site handlers.
+The user updates the combined script to 1.0.14 and reloads SpicyChat. Verify the chat export in the real account after updating. Local and CI browser checks use synthetic site handlers.
 
 ## Full original-source audit (1.0.5)
 
@@ -107,3 +107,8 @@ The user updates the combined script to 1.0.13 and reloads SpicyChat. No repeate
 
 - The user showed the site's winning rule: `.chat-appearance-scope[data-chat-appearance="on"] .storyBookLayout .storyBookDivider` with `!important`. The previous selector was less specific. Add the exact appearance/layout context plus the target element and test ID to beat the site's rule regardless of stylesheet order; keep the original narrow fallback outside that context.
 - Browser smoke now reproduces the reported rule, including later insertion of the site stylesheet and a dynamic divider in the same layout. Unrelated dividers and inactive suite remain unchanged.
+
+## Chat JSON export (1.0.14)
+
+- The chat settings panel shows **Скачать чат в JSON** with a progress bar and a running message count. The browser downloads the file after the full history is collected. Navigation away from the dialogue cancels the pending export.
+- Export and summary share the document-start session capture and history request. Export works with the summary module disabled. Each download contains the conversation and character IDs, title, and API message records ordered oldest to newest. Variants and attachment references stay in the message records. Duplicate page entries are dropped by message ID. Incomplete pagination is reported in the panel.

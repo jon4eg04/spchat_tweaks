@@ -165,6 +165,63 @@ await page.locator('#thread').click({ position: { x: 2, y: 2 } });
 await page.waitForFunction(() => !document.querySelector('[data-fixture-menu]'));
 scenarios.push('persistent-panel-and-no-plus-menu-duplicates', 'native-menu-dismissal-without-duplicates');
 
+const exportPage = await fixture();
+const exportPanel = exportPage.locator('#spchat-chat-panel');
+const exportButton = exportPanel.getByRole('button', { name: 'Скачать чат в JSON' });
+const exportProgress = exportPanel.getByRole('progressbar', { name: 'Прогресс выгрузки чата' });
+const oldestFirst = Array.from({ length: 52 }, (_, index) => ({
+    id: `export-${index}`, role: index % 2 ? 'user' : 'bot', content: ` Привет ${index}\n*строка* `,
+    createdAt: 1700000000000 + index * 1000,
+    ...(index === 2 ? { is_alternative: true, prev_id: 'export-1', image: 'conversations/fixture.png' } : {}),
+}));
+const newestFirst = oldestFirst.slice().reverse();
+const exportCursors = [];
+let failExport = false;
+let releaseLastPage;
+const lastPageGate = new Promise(resolve => { releaseLastPage = resolve; });
+await exportPage.route(`**/characters/${bot}/messages/${chat}*`, async route => {
+    const query = new URL(route.request().url()).searchParams;
+    if (!query.has('limit') || route.request().method() === 'OPTIONS') return route.fallback();
+    const cursor = query.get('last_id');
+    exportCursors.push(cursor);
+    assert.equal(route.request().headers().authorization, 'Bearer synthetic-export');
+    const headers = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' };
+    if (cursor) await lastPageGate;
+    return route.fulfill({ status: failExport && cursor ? 503 : 200, headers, json: {
+        conversation_id: chat, num_messages: oldestFirst.length, label: 'Пример',
+        messages: cursor ? newestFirst.slice(49) : newestFirst.slice(0, 50),
+    } });
+});
+await exportPage.evaluate(async ({ bot, chat }) => {
+    await fetch(`https://prod.nd-api.com/characters/${bot}/messages/${chat}`, { headers: [['Authorization', 'Bearer synthetic-export']] });
+}, { bot, chat });
+await exportButton.click();
+await exportPanel.getByText('Загружено сообщений: 50 из 52', { exact: true }).waitFor();
+assert.equal(await exportProgress.isVisible(), true);
+assert.equal(await exportButton.isDisabled(), true);
+assert.ok(await exportProgress.evaluate(node => node.value > 0 && node.value < node.max));
+const downloadEvent = exportPage.waitForEvent('download');
+releaseLastPage();
+const download = await downloadEvent;
+assert.equal(download.suggestedFilename(), `spicychat-${chat}.json`);
+assert.deepEqual(JSON.parse(await readFile(await download.path(), 'utf8')), {
+    schemaVersion: 1, characterId: bot, conversationId: chat, title: 'Пример', messages: oldestFirst,
+});
+await exportPanel.getByText('Выгрузка готова · сообщений: 52').waitFor();
+assert.equal(await exportProgress.evaluate(node => node.value), 100);
+assert.deepEqual(exportCursors, [null, 'export-2']);
+
+let downloadsAfterSuccess = 0;
+exportPage.on('download', () => { downloadsAfterSuccess++; });
+failExport = true;
+await exportButton.click();
+await exportPanel.getByText('SpicyChat вернул HTTP 503.', { exact: false }).waitFor();
+assert.equal(await exportProgress.isVisible(), false);
+assert.equal(await exportButton.isEnabled(), true);
+assert.equal(downloadsAfterSuccess, 0);
+await exportPage.close();
+scenarios.push('chat-json-download-without-summary', 'chat-export-progress-pagination-and-failure');
+
 await page.locator(`#message-${messages[0]} [aria-label=message-dropdown]`).click();
 await page.locator('.tm-sc-save-history-message').click();
 await page.waitForFunction(bot => __gm.get(`tm-sc-saved-texts-v1:bot:${bot}`)?.length === 2, bot);

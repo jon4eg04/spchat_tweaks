@@ -16,13 +16,9 @@ export default function init(runtime) {
     const OVERLAY_ID = 'tm-sc-gpt-summary-overlay';
     const STYLE_ID = 'tm-sc-gpt-summary-style';
     const CACHE_PREFIX = 'tm-sc-gpt-summary-v1.1:';
-    const PAGE_SIZE = 50;
     const MAX_HISTORY_PAGES = 1000;
     const CHUNK_CHARACTER_LIMIT = 110000;
     const ENDPOINT_TIMEOUT = 290000;
-    const API_WAIT_TIMEOUT = 10000;
-    const XHR_URL_KEY = '__tmScGptSummaryUrl';
-    const INTERNAL_RESPONSE_CONSUMER_FLAG = '__tmScConsumesJsonResponse';
     const ROUTE_CHANGE_EVENT = 'tm-sc-route-change';
     const CHAT_MENU_ITEM_ORDER = [
         'tm-sc-open-message-bookmarks',
@@ -30,21 +26,7 @@ export default function init(runtime) {
         'tm-sc-open-gpt-summary',
         'tm-sc-open-chat-branches',
     ];
-    const API_HEADER_NAMES = new Set([
-        'authorization',
-        'x-guest-userid',
-        'x-country',
-        'x-app-id',
-        'x-app-version',
-        'x-platform',
-        'x-platform-os',
-        'accept',
-        'content-type',
-    ]);
 
-    const apiHeaders = new Map();
-    let apiOrigin = '';
-    let apiNativeFetch = null;
     let capturedConversationInfo = null;
     let activeContext = null;
     let ensureScheduled = false;
@@ -149,58 +131,6 @@ export default function init(runtime) {
         if (overlay && !overlay.hidden) closeOverlay();
     }
 
-    function readRequestUrl(input) {
-        if (typeof input === 'string') return input;
-        if (input && typeof input.url === 'string') return input.url;
-        try {
-            return String(input || '');
-        } catch (_error) {
-            return '';
-        }
-    }
-
-    function isSpicyApiUrl(rawUrl) {
-        try {
-            const url = new URL(rawUrl, location.href);
-            return url.hostname === 'nd-api.com' || url.hostname.endsWith('.nd-api.com');
-        } catch (_error) {
-            return false;
-        }
-    }
-
-    function headerEntries(source) {
-        if (!source) return [];
-        const entries = [];
-        try {
-            if (typeof source.forEach === 'function') {
-                source.forEach((value, name) => entries.push([name, value]));
-                return entries;
-            }
-            if (Array.isArray(source)) return source;
-            if (typeof source === 'object') return Object.entries(source);
-        } catch (_error) {
-            return [];
-        }
-        return entries;
-    }
-
-    function rememberApiAccess(rawUrl, ...headerSources) {
-        if (!isSpicyApiUrl(rawUrl)) return;
-        try {
-            apiOrigin = new URL(rawUrl, location.href).origin;
-        } catch (_error) {
-            return;
-        }
-
-        for (const source of headerSources) {
-            for (const [rawName, rawValue] of headerEntries(source)) {
-                const name = String(rawName || '').toLowerCase();
-                if (!API_HEADER_NAMES.has(name) || rawValue === undefined || rawValue === null) continue;
-                apiHeaders.set(name, String(rawValue));
-            }
-        }
-    }
-
     function captureConversationPayload(payload) {
         ensureContext();
         if (!activeContext || !payload || typeof payload !== 'object') return;
@@ -220,83 +150,12 @@ export default function init(runtime) {
         };
     }
 
-    function installApiCapture() {
-        const originalFetch = pageWindow.fetch;
-        if (typeof originalFetch === 'function') {
-            apiNativeFetch = originalFetch;
-            pageWindow.fetch = function (input, options = {}) {
-                const requestUrl = readRequestUrl(input);
-                if (isSpicyApiUrl(requestUrl)) {
-                    rememberApiAccess(requestUrl, input?.headers, options?.headers);
-                }
-                return Reflect.apply(originalFetch, this, arguments);
-            };
-        }
-
-        try {
-            const prototype = pageWindow.XMLHttpRequest?.prototype;
-            if (!prototype) return;
-            const originalOpen = prototype.open;
-            const originalSetRequestHeader = prototype.setRequestHeader;
-            const originalSend = prototype.send;
-
-            prototype.open = function (...args) {
-                this[XHR_URL_KEY] = readRequestUrl(args[1]);
-                if (isSpicyApiUrl(this[XHR_URL_KEY])) rememberApiAccess(this[XHR_URL_KEY]);
-                return Reflect.apply(originalOpen, this, args);
-            };
-
-            prototype.setRequestHeader = function (name, value) {
-                if (isSpicyApiUrl(this[XHR_URL_KEY])) {
-                    rememberApiAccess(this[XHR_URL_KEY], { [name]: value });
-                }
-                return Reflect.apply(originalSetRequestHeader, this, arguments);
-            };
-
-            prototype.send = function (...args) {
-                return Reflect.apply(originalSend, this, args);
-            };
-        } catch (error) {
-            console.warn('[GPT Summary] Не удалось подключиться к XMLHttpRequest.', error);
-        }
-    }
-
-    function hasApiAccess() {
-        return Boolean(apiNativeFetch && apiOrigin && apiHeaders.get('authorization'));
+    function checkRun(serial) {
+        if (serial !== runSerial) throw new Error('Операция отменена.');
     }
 
     function sleep(milliseconds) {
         return new Promise((resolve) => pageWindow.setTimeout(resolve, milliseconds));
-    }
-
-    async function waitForApiAccess(serial) {
-        const startedAt = Date.now();
-        while (!hasApiAccess() && Date.now() - startedAt < API_WAIT_TIMEOUT) {
-            if (serial !== runSerial) throw new Error('Операция отменена.');
-            await sleep(160);
-        }
-        if (!hasApiAccess()) {
-            throw new Error('Не удалось поймать сессию SpicyChat. Обнови страницу и попробуй ещё раз.');
-        }
-    }
-
-    async function fetchApiJson(path) {
-        if (!hasApiAccess()) throw new Error('Сессия API SpicyChat ещё не обнаружена.');
-        const url = new URL(path, `${apiOrigin}/`).toString();
-        const headers = Object.fromEntries(apiHeaders);
-        headers.accept = 'application/json';
-
-        const response = await Reflect.apply(apiNativeFetch, pageWindow, [url, {
-            method: 'GET',
-            headers,
-            mode: 'cors',
-            credentials: 'omit',
-            [INTERNAL_RESPONSE_CONSUMER_FLAG]: true,
-        }]);
-        if (!response?.ok) throw new Error(`SpicyChat вернул HTTP ${response?.status || 0}.`);
-        const payload = await response.json();
-        captureConversationPayload(payload);
-        return payload;
     }
 
     function normalizeTimestamp(value) {
@@ -375,13 +234,9 @@ export default function init(runtime) {
         let page = 0;
 
         while (page < MAX_HISTORY_PAGES) {
-            if (serial !== runSerial) throw new Error('Операция отменена.');
-            const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
-            if (lastId) query.set('last_id', lastId);
-            const payload = await fetchApiJson(
-                `/characters/${encodeURIComponent(context.characterId)}/messages/`
-                + `${encodeURIComponent(context.conversationId)}?${query}`,
-            );
+            checkRun(serial);
+            const payload = await runtime.chatHistoryApi.fetchPage(context, lastId);
+            captureConversationPayload(payload);
             const batch = Array.isArray(payload?.messages) ? payload.messages : [];
             total = Math.max(total, Number(payload?.num_messages) || 0, seen.size);
 
@@ -405,7 +260,7 @@ export default function init(runtime) {
                 `Пачка ${page + 1}`,
             );
 
-            if (batch.length < PAGE_SIZE || !added) break;
+            if (batch.length < CHAT_HISTORY_PAGE_SIZE || !added) break;
             const nextLastId = normalizeMessageId(batch.at(-1)?.id);
             if (!nextLastId || nextLastId === lastId) break;
             lastId = nextLastId;
@@ -994,7 +849,7 @@ export default function init(runtime) {
         setProgress(2, 'Подключаюсь к истории SpicyChat…');
 
         try {
-            await waitForApiAccess(serial);
+            await runtime.chatHistoryApi.waitForAccess(() => checkRun(serial));
             const contextAtStart = { ...activeContext };
             const history = await fetchCompleteHistory(contextAtStart, serial);
             if (serial !== runSerial || contextAtStart.key !== activeContext?.key) return;
@@ -1195,7 +1050,6 @@ export default function init(runtime) {
         window.removeEventListener('keydown', handleKeydown, true);
     }
 
-    installApiCapture();
     installRouteChangeSignal();
     window.addEventListener('pagehide', cleanup);
     window.addEventListener(ROUTE_CHANGE_EVENT, startDomFeatures);

@@ -344,6 +344,7 @@ export default function init(runtime) {
         if (panel) { panel.refresh(); return; }
         panel = runtime.createChatPanel({
             getContext: getCurrentChatContext,
+            exportHistory: (context, options) => collectChatExport(runtime.chatHistoryApi, context, options),
             models: INFERENCE_MODELS,
             minTokens: MIN_TOKENS, maxTokens: MAX_TOKENS, tokenStep: TOKEN_STEP, initialTokens: INITIAL_TOKENS,
             read(conversation) {
