@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SpicyChat Tools
 // @namespace    https://github.com/jon4eg04/spchat_tweaks
-// @version      1.0.13
+// @version      1.0.14
 // @description  Единый комплект из 12 функций SpicyChat с локальными настройками и переносом старых данных.
 // @homepageURL  https://github.com/jon4eg04/spchat_tweaks
 // @supportURL   https://github.com/jon4eg04/spchat_tweaks/issues
@@ -26,7 +26,7 @@
 (function () {
 'use strict';
 
-const SUITE_VERSION = "1.0.13";
+const SUITE_VERSION = "1.0.14";
 
 const MODULE_CATALOG = [
   {
@@ -1304,10 +1304,180 @@ function createNativeModelAdapter() {
 }
 
 
+// ---- src/core/chat-history.js ----
+
+const CHAT_HISTORY_PAGE_SIZE = 50;
+
+function normalizeChatMessageId(value) {
+    return typeof value === 'string' ? value.trim().replace(/^message-/, '') : '';
+}
+
+// Capture the site's session at document-start for the two history consumers.
+function createChatHistoryApi(pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window) {
+    const headerNames = new Set([
+        'authorization', 'x-guest-userid', 'x-country', 'x-app-id', 'x-app-version',
+        'x-platform', 'x-platform-os', 'accept', 'content-type',
+    ]);
+    const headersByOrigin = new Map();
+    const xhrOrigins = new WeakMap();
+    const originalFetch = pageWindow.fetch;
+    let sessionOrigin = '';
+
+    function getApiOrigin(input) {
+        try {
+            const url = new URL(input?.url ?? input, pageWindow.location.href);
+            if (url.protocol === 'https:' && url.hostname !== 'cdn.nd-api.com'
+                && (url.hostname === 'nd-api.com' || url.hostname.endsWith('.nd-api.com'))) return url.origin;
+        } catch { /* Requests outside the history API are ignored. */ }
+        return '';
+    }
+
+    function rememberHeader(origin, rawName, value) {
+        const name = String(rawName).toLowerCase();
+        if (!headerNames.has(name) || value == null) return;
+        if (!headersByOrigin.has(origin)) headersByOrigin.set(origin, new Map());
+        headersByOrigin.get(origin).set(name, String(value));
+        if (name === 'authorization' && value) sessionOrigin = origin;
+    }
+
+    function rememberHeaders(origin, source) {
+        if (!source) return;
+        try {
+            if (!Array.isArray(source) && typeof source.forEach === 'function') {
+                source.forEach((value, name) => rememberHeader(origin, name, value));
+            } else {
+                for (const [name, value] of Array.isArray(source) ? source : Object.entries(source)) {
+                    rememberHeader(origin, name, value);
+                }
+            }
+        } catch { /* A nonstandard header value must not stop the site's request. */ }
+    }
+
+    if (typeof originalFetch === 'function') {
+        pageWindow.fetch = function (input, options) {
+            const origin = getApiOrigin(input);
+            if (origin) rememberHeaders(origin, options?.headers ?? input?.headers);
+            return Reflect.apply(originalFetch, this, arguments);
+        };
+    }
+
+    try {
+        const prototype = pageWindow.XMLHttpRequest?.prototype;
+        if (prototype) {
+            const originalOpen = prototype.open;
+            const originalSetRequestHeader = prototype.setRequestHeader;
+            prototype.open = function (method, url) {
+                xhrOrigins.set(this, getApiOrigin(url));
+                return Reflect.apply(originalOpen, this, arguments);
+            };
+            prototype.setRequestHeader = function (name, value) {
+                const origin = xhrOrigins.get(this);
+                if (origin) rememberHeader(origin, name, value);
+                return Reflect.apply(originalSetRequestHeader, this, arguments);
+            };
+        }
+    } catch (error) {
+        console.warn('[SpicyChat Tools] Не удалось подключить историю к XMLHttpRequest.', error);
+    }
+
+    function hasAccess() {
+        return typeof originalFetch === 'function' && Boolean(headersByOrigin.get(sessionOrigin)?.get('authorization'));
+    }
+
+    async function waitForAccess(checkCurrent) {
+        const deadline = Date.now() + 10000;
+        while (!hasAccess() && Date.now() < deadline) {
+            checkCurrent();
+            await new Promise(resolve => pageWindow.setTimeout(resolve, 160));
+        }
+        checkCurrent();
+        if (!hasAccess()) throw new Error('Не удалось поймать сессию SpicyChat. Обнови страницу и попробуй ещё раз.');
+    }
+
+    async function fetchPage({ characterId, conversationId }, lastId, signal) {
+        if (!hasAccess()) throw new Error('Сессия API SpicyChat ещё не обнаружена.');
+        const query = new URLSearchParams({ limit: String(CHAT_HISTORY_PAGE_SIZE) });
+        if (lastId) query.set('last_id', lastId);
+        const path = `/characters/${encodeURIComponent(characterId)}/messages/${encodeURIComponent(conversationId)}?${query}`;
+        const headers = Object.fromEntries(headersByOrigin.get(sessionOrigin));
+        headers.accept = 'application/json';
+        const options = {
+            method: 'GET', headers, mode: 'cors', credentials: 'omit',
+            __tmScConsumesJsonResponse: true,
+        };
+        if (signal) options.signal = AbortSignal.any([signal, AbortSignal.timeout(30000)]);
+        const response = await Reflect.apply(originalFetch, pageWindow, [new URL(path, sessionOrigin).href, options]);
+        if (!response?.ok) throw new Error(`SpicyChat вернул HTTP ${response?.status || 0}.`);
+        return await response.json();
+    }
+
+    return { fetchPage, waitForAccess };
+}
+
+function exportMessageTime(message) {
+    const value = message.createdAt ?? message.created_at;
+    if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) return null;
+    const number = Number(value);
+    const time = Number.isFinite(number) ? (number < 100000000000 ? number * 1000 : number) : Date.parse(value);
+    return Number.isFinite(time) && time > 0 ? time : null;
+}
+
+async function collectChatExport(api, context, { signal, onProgress }) {
+    await api.waitForAccess(() => signal.throwIfAborted());
+    const messages = new Map();
+    const cursors = new Set();
+    let lastId = '';
+    let total = 0;
+    let title = null;
+
+    while (true) {
+        signal.throwIfAborted();
+        const payload = await api.fetchPage(context, lastId, signal);
+        signal.throwIfAborted();
+        const batch = payload?.messages;
+        if (!Array.isArray(batch) || (payload.conversation_id && payload.conversation_id !== context.conversationId)) {
+            throw new Error('SpicyChat вернул неожиданный ответ при загрузке истории.');
+        }
+        const reportedTotal = Number(payload.num_messages);
+        if (Number.isSafeInteger(reportedTotal)) total = Math.max(total, reportedTotal);
+        if (title === null && typeof payload.label === 'string') title = payload.label;
+
+        const previousCount = messages.size;
+        for (const message of batch) {
+            const id = normalizeChatMessageId(message?.id);
+            if (!id) throw new Error('SpicyChat вернул сообщение без идентификатора.');
+            if (!messages.has(id)) messages.set(id, message);
+        }
+        onProgress(messages.size, total);
+
+        if (batch.length < CHAT_HISTORY_PAGE_SIZE && messages.size >= total) break;
+        lastId = normalizeChatMessageId(batch.at(-1)?.id);
+        if (!lastId || cursors.has(lastId) || messages.size === previousCount) {
+            throw new Error('SpicyChat не вернул следующую страницу истории. Попробуй скачать чат ещё раз.');
+        }
+        cursors.add(lastId);
+        await new Promise(resolve => setTimeout(resolve, 55));
+    }
+
+    // The API pages run newest-first. Preserve that order reversed for equal
+    // timestamps and keep undated records in their API positions.
+    const oldestFirst = [...messages.values()].reverse().map(message => ({ message, time: exportMessageTime(message) }));
+    const dated = oldestFirst.filter(entry => entry.time !== null).sort((left, right) => left.time - right.time);
+    let dateIndex = 0;
+    return {
+        schemaVersion: 1,
+        characterId: context.characterId,
+        conversationId: context.conversationId,
+        title,
+        messages: oldestFirst.map(entry => entry.time === null ? entry.message : dated[dateIndex++].message),
+    };
+}
+
+
 // ---- src/core/chat-panel.js ----
 
 // Always-available per-conversation controls; persistence stays in the feature.
-function createChatPanel({ getContext, read, save, models, minTokens, maxTokens, tokenStep, initialTokens, shadowMode = 'closed' }) {
+function createChatPanel({ getContext, read, save, exportHistory, models, minTokens, maxTokens, tokenStep, initialTokens, shadowMode = 'closed' }) {
     const host = document.createElement('div'); host.id = 'spchat-chat-panel';
     const root = host.attachShadow({ mode: shadowMode });
     const style = document.createElement('style');
@@ -1344,6 +1514,11 @@ function createChatPanel({ getContext, read, save, models, minTokens, maxTokens,
         .manual { margin-top: 8px; }
         .manual > summary { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #d4ccff; }
         .error { color: #ffb6ab; font-size: 12px; margin-top: 8px; overflow-wrap: anywhere; }
+        .chat-export { border-top: 1px solid #484a5b; margin-top: 8px; padding-top: 6px; }
+        .chat-export button:disabled { opacity: .65; cursor: default; }
+        .chat-export progress { display: block; width: 100%; height: 10px; margin: 4px 0; accent-color: #a395f7; }
+        .chat-export .hint { overflow-wrap: anywhere; }
+        .chat-export .is-error { color: #ffb6ab; }
         @media(max-width: 540px) { :host { right: 12px; top: 64px; width: min(250px, calc(100vw - 24px)); } details.panel { max-height: calc(100dvh - 80px); } }
     `;
     for (const type of ['keydown', 'keyup', 'keypress']) root.addEventListener(type, event => event.stopPropagation());
@@ -1378,18 +1553,92 @@ function createChatPanel({ getContext, read, save, models, minTokens, maxTokens,
     manualDetails.append(manualCaption, manual);
     const hint = document.createElement('p'); hint.className = 'hint'; hint.textContent = 'Сохраняется сразу · каждая команда — отдельная /cmd';
     const status = document.createElement('div'); status.className = 'error'; status.setAttribute('role', 'status');
-    body.append(modelLabel, tokenLabel, commandsField, manualDetails, hint, status); panel.append(heading, body); root.append(style, panel);
+    const exportSection = document.createElement('div'); exportSection.className = 'chat-export';
+    const exportButton = document.createElement('button'); exportButton.type = 'button'; exportButton.textContent = 'Скачать чат в JSON';
+    const exportProgress = document.createElement('progress'); exportProgress.max = 100; exportProgress.hidden = true;
+    exportProgress.setAttribute('aria-label', 'Прогресс выгрузки чата');
+    const exportStatus = document.createElement('p'); exportStatus.className = 'hint'; exportStatus.setAttribute('role', 'status'); exportStatus.hidden = true;
+    exportSection.append(exportButton, exportProgress, exportStatus);
+    body.append(modelLabel, tokenLabel, commandsField, manualDetails, hint, status, exportSection); panel.append(heading, body); root.append(style, panel);
 
     let conversation = '';
     let signature = '';
+    let exportRoute = '';
+    let exportJob = null;
     const rows = new Map();
     const errors = new Map();
     const preview = value => value.replace(/\s+/g, ' ').trim() || 'не задана';
     const showErrors = () => { const text = [...errors.values()].join(' '); if (status.textContent !== text) status.textContent = text; };
+    const routeKey = context => context?.conversationId ? `${context.characterId}/${context.conversationId}` : '';
+
+    function resetExport() {
+        exportJob?.abort();
+        exportJob = null;
+        exportButton.disabled = false;
+        exportProgress.hidden = true;
+        exportProgress.removeAttribute('value');
+        exportStatus.hidden = true;
+        exportStatus.textContent = '';
+        exportStatus.classList.remove('is-error');
+    }
+
+    async function downloadChat() {
+        const context = getContext();
+        const route = routeKey(context);
+        if (exportJob || !route || route !== exportRoute) return;
+        resetExport();
+        const job = new AbortController();
+        exportJob = job;
+        const isCurrent = () => exportJob === job && routeKey(getContext()) === route;
+        exportButton.disabled = true;
+        exportProgress.hidden = false;
+        exportStatus.hidden = false;
+        exportStatus.textContent = 'Подключаюсь к истории SpicyChat…';
+
+        try {
+            const history = await exportHistory(context, {
+                signal: job.signal,
+                onProgress(count, total) {
+                    if (!isCurrent()) return;
+                    if (total > 0) exportProgress.value = Math.min(95, 100 * count / total);
+                    exportStatus.textContent = `Загружено сообщений: ${count}${total > 0 ? ` из ${Math.max(count, total)}` : ''}`;
+                },
+            });
+            if (!isCurrent()) return;
+            const blob = new Blob([JSON.stringify(history, null, 2) + '\n'], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `spicychat-${context.conversationId}.json`;
+            link.hidden = true;
+            root.append(link);
+            try { link.click(); }
+            finally {
+                link.remove();
+                window.setTimeout(() => URL.revokeObjectURL(url), 10000);
+            }
+            exportProgress.value = 100;
+            exportStatus.textContent = `Выгрузка готова · сообщений: ${history.messages.length}`;
+        } catch (error) {
+            if (!isCurrent()) return;
+            exportProgress.hidden = true;
+            exportStatus.classList.add('is-error');
+            const reason = error?.name === 'TimeoutError' ? 'SpicyChat слишком долго отвечал.' : (error?.message || 'Неизвестная ошибка.');
+            exportStatus.textContent = `Не удалось скачать чат. ${reason}`;
+        } finally {
+            if (exportJob === job) {
+                exportJob = null;
+                exportButton.disabled = false;
+            }
+        }
+    }
 
     function refresh() {
         if (!host.isConnected && document.body) document.body.append(host);
-        const current = getContext()?.conversationId || '';
+        const context = getContext();
+        const current = context?.conversationId || '';
+        const route = routeKey(context);
+        if (route !== exportRoute) { exportRoute = route; resetExport(); }
         host.hidden = !current;
         if (!current) { conversation = ''; signature = ''; delete host.dataset.scConversation; return; }
         const changedChat = current !== conversation;
@@ -1454,8 +1703,10 @@ function createChatPanel({ getContext, read, save, models, minTokens, maxTokens,
     range.addEventListener('pointerup', () => commit('tokens', id => save.limit(id, Number(range.value))));
     siteTokens.addEventListener('click', event => { event.preventDefault(); commit('tokens', id => save.limit(id, null)); });
     manual.addEventListener('input', () => commit('manual', id => save.manual(id, manual.value)));
+    exportButton.addEventListener('click', downloadChat);
     window.addEventListener('storage', () => { signature = ''; refresh(); });
     window.addEventListener('popstate', refresh);
+    window.addEventListener('pagehide', resetExport);
     window.addEventListener('pageshow', refresh);
     // Covers pushState/replaceState and GM changes from other open tabs without
     // wrapping the site's history methods or exposing suite state to the page.
@@ -1813,6 +2064,7 @@ function init_per_chat(runtime) {
         if (panel) { panel.refresh(); return; }
         panel = runtime.createChatPanel({
             getContext: getCurrentChatContext,
+            exportHistory: (context, options) => collectChatExport(runtime.chatHistoryApi, context, options),
             models: INFERENCE_MODELS,
             minTokens: MIN_TOKENS, maxTokens: MAX_TOKENS, tokenStep: TOKEN_STEP, initialTokens: INITIAL_TOKENS,
             read(conversation) {
@@ -10411,13 +10663,9 @@ function init_summary(runtime) {
     const OVERLAY_ID = 'tm-sc-gpt-summary-overlay';
     const STYLE_ID = 'tm-sc-gpt-summary-style';
     const CACHE_PREFIX = 'tm-sc-gpt-summary-v1.1:';
-    const PAGE_SIZE = 50;
     const MAX_HISTORY_PAGES = 1000;
     const CHUNK_CHARACTER_LIMIT = 110000;
     const ENDPOINT_TIMEOUT = 290000;
-    const API_WAIT_TIMEOUT = 10000;
-    const XHR_URL_KEY = '__tmScGptSummaryUrl';
-    const INTERNAL_RESPONSE_CONSUMER_FLAG = '__tmScConsumesJsonResponse';
     const ROUTE_CHANGE_EVENT = 'tm-sc-route-change';
     const CHAT_MENU_ITEM_ORDER = [
         'tm-sc-open-message-bookmarks',
@@ -10425,21 +10673,7 @@ function init_summary(runtime) {
         'tm-sc-open-gpt-summary',
         'tm-sc-open-chat-branches',
     ];
-    const API_HEADER_NAMES = new Set([
-        'authorization',
-        'x-guest-userid',
-        'x-country',
-        'x-app-id',
-        'x-app-version',
-        'x-platform',
-        'x-platform-os',
-        'accept',
-        'content-type',
-    ]);
 
-    const apiHeaders = new Map();
-    let apiOrigin = '';
-    let apiNativeFetch = null;
     let capturedConversationInfo = null;
     let activeContext = null;
     let ensureScheduled = false;
@@ -10544,58 +10778,6 @@ function init_summary(runtime) {
         if (overlay && !overlay.hidden) closeOverlay();
     }
 
-    function readRequestUrl(input) {
-        if (typeof input === 'string') return input;
-        if (input && typeof input.url === 'string') return input.url;
-        try {
-            return String(input || '');
-        } catch (_error) {
-            return '';
-        }
-    }
-
-    function isSpicyApiUrl(rawUrl) {
-        try {
-            const url = new URL(rawUrl, location.href);
-            return url.hostname === 'nd-api.com' || url.hostname.endsWith('.nd-api.com');
-        } catch (_error) {
-            return false;
-        }
-    }
-
-    function headerEntries(source) {
-        if (!source) return [];
-        const entries = [];
-        try {
-            if (typeof source.forEach === 'function') {
-                source.forEach((value, name) => entries.push([name, value]));
-                return entries;
-            }
-            if (Array.isArray(source)) return source;
-            if (typeof source === 'object') return Object.entries(source);
-        } catch (_error) {
-            return [];
-        }
-        return entries;
-    }
-
-    function rememberApiAccess(rawUrl, ...headerSources) {
-        if (!isSpicyApiUrl(rawUrl)) return;
-        try {
-            apiOrigin = new URL(rawUrl, location.href).origin;
-        } catch (_error) {
-            return;
-        }
-
-        for (const source of headerSources) {
-            for (const [rawName, rawValue] of headerEntries(source)) {
-                const name = String(rawName || '').toLowerCase();
-                if (!API_HEADER_NAMES.has(name) || rawValue === undefined || rawValue === null) continue;
-                apiHeaders.set(name, String(rawValue));
-            }
-        }
-    }
-
     function captureConversationPayload(payload) {
         ensureContext();
         if (!activeContext || !payload || typeof payload !== 'object') return;
@@ -10615,83 +10797,12 @@ function init_summary(runtime) {
         };
     }
 
-    function installApiCapture() {
-        const originalFetch = pageWindow.fetch;
-        if (typeof originalFetch === 'function') {
-            apiNativeFetch = originalFetch;
-            pageWindow.fetch = function (input, options = {}) {
-                const requestUrl = readRequestUrl(input);
-                if (isSpicyApiUrl(requestUrl)) {
-                    rememberApiAccess(requestUrl, input?.headers, options?.headers);
-                }
-                return Reflect.apply(originalFetch, this, arguments);
-            };
-        }
-
-        try {
-            const prototype = pageWindow.XMLHttpRequest?.prototype;
-            if (!prototype) return;
-            const originalOpen = prototype.open;
-            const originalSetRequestHeader = prototype.setRequestHeader;
-            const originalSend = prototype.send;
-
-            prototype.open = function (...args) {
-                this[XHR_URL_KEY] = readRequestUrl(args[1]);
-                if (isSpicyApiUrl(this[XHR_URL_KEY])) rememberApiAccess(this[XHR_URL_KEY]);
-                return Reflect.apply(originalOpen, this, args);
-            };
-
-            prototype.setRequestHeader = function (name, value) {
-                if (isSpicyApiUrl(this[XHR_URL_KEY])) {
-                    rememberApiAccess(this[XHR_URL_KEY], { [name]: value });
-                }
-                return Reflect.apply(originalSetRequestHeader, this, arguments);
-            };
-
-            prototype.send = function (...args) {
-                return Reflect.apply(originalSend, this, args);
-            };
-        } catch (error) {
-            console.warn('[GPT Summary] Не удалось подключиться к XMLHttpRequest.', error);
-        }
-    }
-
-    function hasApiAccess() {
-        return Boolean(apiNativeFetch && apiOrigin && apiHeaders.get('authorization'));
+    function checkRun(serial) {
+        if (serial !== runSerial) throw new Error('Операция отменена.');
     }
 
     function sleep(milliseconds) {
         return new Promise((resolve) => pageWindow.setTimeout(resolve, milliseconds));
-    }
-
-    async function waitForApiAccess(serial) {
-        const startedAt = Date.now();
-        while (!hasApiAccess() && Date.now() - startedAt < API_WAIT_TIMEOUT) {
-            if (serial !== runSerial) throw new Error('Операция отменена.');
-            await sleep(160);
-        }
-        if (!hasApiAccess()) {
-            throw new Error('Не удалось поймать сессию SpicyChat. Обнови страницу и попробуй ещё раз.');
-        }
-    }
-
-    async function fetchApiJson(path) {
-        if (!hasApiAccess()) throw new Error('Сессия API SpicyChat ещё не обнаружена.');
-        const url = new URL(path, `${apiOrigin}/`).toString();
-        const headers = Object.fromEntries(apiHeaders);
-        headers.accept = 'application/json';
-
-        const response = await Reflect.apply(apiNativeFetch, pageWindow, [url, {
-            method: 'GET',
-            headers,
-            mode: 'cors',
-            credentials: 'omit',
-            [INTERNAL_RESPONSE_CONSUMER_FLAG]: true,
-        }]);
-        if (!response?.ok) throw new Error(`SpicyChat вернул HTTP ${response?.status || 0}.`);
-        const payload = await response.json();
-        captureConversationPayload(payload);
-        return payload;
     }
 
     function normalizeTimestamp(value) {
@@ -10770,13 +10881,9 @@ function init_summary(runtime) {
         let page = 0;
 
         while (page < MAX_HISTORY_PAGES) {
-            if (serial !== runSerial) throw new Error('Операция отменена.');
-            const query = new URLSearchParams({ limit: String(PAGE_SIZE) });
-            if (lastId) query.set('last_id', lastId);
-            const payload = await fetchApiJson(
-                `/characters/${encodeURIComponent(context.characterId)}/messages/`
-                + `${encodeURIComponent(context.conversationId)}?${query}`,
-            );
+            checkRun(serial);
+            const payload = await runtime.chatHistoryApi.fetchPage(context, lastId);
+            captureConversationPayload(payload);
             const batch = Array.isArray(payload?.messages) ? payload.messages : [];
             total = Math.max(total, Number(payload?.num_messages) || 0, seen.size);
 
@@ -10800,7 +10907,7 @@ function init_summary(runtime) {
                 `Пачка ${page + 1}`,
             );
 
-            if (batch.length < PAGE_SIZE || !added) break;
+            if (batch.length < CHAT_HISTORY_PAGE_SIZE || !added) break;
             const nextLastId = normalizeMessageId(batch.at(-1)?.id);
             if (!nextLastId || nextLastId === lastId) break;
             lastId = nextLastId;
@@ -11389,7 +11496,7 @@ function init_summary(runtime) {
         setProgress(2, 'Подключаюсь к истории SpicyChat…');
 
         try {
-            await waitForApiAccess(serial);
+            await runtime.chatHistoryApi.waitForAccess(() => checkRun(serial));
             const contextAtStart = { ...activeContext };
             const history = await fetchCompleteHistory(contextAtStart, serial);
             if (serial !== runSerial || contextAtStart.key !== activeContext?.key) return;
@@ -11590,7 +11697,6 @@ function init_summary(runtime) {
         window.removeEventListener('keydown', handleKeydown, true);
     }
 
-    installApiCapture();
     installRouteChangeSignal();
     window.addEventListener('pagehide', cleanup);
     window.addEventListener(ROUTE_CHANGE_EVENT, startDomFeatures);
@@ -15307,7 +15413,11 @@ function startFeature(module) {
     if (!mainSite && !module.matchesSubdomains) return;
     if (!store.settings.active || !store.settings.modules[module.id]) return;
     if (started.has(module.id)) return;
-    try { FEATURE_INITIALIZERS[module.id](runtime); started.add(module.id); }
+    try {
+        if (module.id === 'per-chat' || module.id === 'summary') runtime.chatHistoryApi ??= createChatHistoryApi();
+        FEATURE_INITIALIZERS[module.id](runtime);
+        started.add(module.id);
+    }
     catch (error) { console.error(`[SpicyChat Tools] Не удалось запустить модуль ${module.id}.`, error); }
 }
 
