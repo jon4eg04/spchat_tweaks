@@ -120,10 +120,9 @@ export function createChatPanel({ getContext, read, save, exportHistory, models,
         try {
             const history = await exportHistory(context, {
                 signal: job.signal,
-                onProgress(count, total) {
+                onProgress(count) {
                     if (!isCurrent()) return;
-                    if (total > 0) exportProgress.value = Math.min(95, 100 * count / total);
-                    exportStatus.textContent = `Загружено сообщений: ${count}${total > 0 ? ` из ${Math.max(count, total)}` : ''}`;
+                    exportStatus.textContent = `Загружено сообщений: ${count}`;
                 },
             });
             if (!isCurrent()) return;

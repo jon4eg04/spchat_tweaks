@@ -8,7 +8,7 @@ function startExport(fetchPage, onProgress = () => {}, signal = new AbortControl
     return collectChatExport({ async waitForAccess(check) { check(); }, fetchPage }, context, { signal, onProgress });
 }
 
-test('export follows a short API page when more records are expected and orders mixed timestamp formats', async () => {
+test('export stops after a short page despite an inflated API count and orders mixed timestamp formats', async () => {
     const oldest = { id: 'oldest', createdAt: 1700000000 };
     const newest = { id: 'newest', created_at: '2024-11-28T00:00:00Z' };
     const undated = { id: 'undated' };
@@ -17,16 +17,27 @@ test('export follows a short API page when more records are expected and orders 
     const progress = [];
     const result = await startExport(async (_context, cursor) => {
         cursors.push(cursor);
-        if (!cursor) return { num_messages: 4, messages: [middle, undated, newest] };
-        return { messages: [newest, oldest] };
-    }, (...args) => progress.push(args));
-    assert.deepEqual(cursors, ['', 'newest']);
-    assert.deepEqual(progress, [[3, 4], [4, 4]]);
+        return { num_messages: 1200, messages: [middle, undated, newest, oldest] };
+    }, count => progress.push(count));
+    assert.deepEqual(cursors, ['']);
+    assert.deepEqual(progress, [4]);
     assert.deepEqual(result.messages, [oldest, middle, undated, newest]);
 });
 
+test('export accepts an empty page after a full page even when the reported count is greater', async () => {
+    const messages = Array.from({ length: 50 }, (_, index) => ({ id: String(index) }));
+    const cursors = [];
+    const result = await startExport(async (_context, cursor) => {
+        cursors.push(cursor);
+        return { num_messages: 1200, messages: cursor ? [] : messages };
+    });
+    assert.deepEqual(cursors, ['', '49']);
+    assert.deepEqual(result.messages, messages.slice().reverse());
+});
+
 test('export rejects stalled pagination and a mismatched conversation instead of returning a partial file', async () => {
-    await assert.rejects(startExport(async () => ({ num_messages: 2, messages: [{ id: 'same' }] })), /не вернул следующую страницу/);
+    const messages = Array.from({ length: 50 }, (_, index) => ({ id: String(index) }));
+    await assert.rejects(startExport(async () => ({ messages })), /не вернул следующую страницу/);
     await assert.rejects(startExport(async () => ({ conversation_id: 'other', messages: [] })), /неожиданный ответ/);
 });
 

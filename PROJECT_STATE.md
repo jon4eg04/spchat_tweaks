@@ -6,7 +6,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Current implementation
 
-- Version 1.0.14. Public source and installation files in this repository.
+- Version 1.0.15. Public source and installation files in this repository.
 - User requested no personal-name attribution anywhere in published files. The author header is omitted, AGENTS.md forbids future personal-name attribution, and public-file checks reject author headers.
 - Added hide-models, based on the user's Hide selected model blocks v1.1: hides Qwen3 235B 2507 and Codex 24B, handles dynamically inserted paragraphs and text changes, and restores a hidden row if the site reuses it for another model. Independently toggled and enabled by default on upgrade.
 - The additional legacy hider is optional in ZIP migration. Original eleven-script backups are still complete; no repeated import is needed for already-migrated users.
@@ -42,7 +42,7 @@ One automatically updated Tampermonkey script containing the user's 11 original 
 
 ## Next steps
 
-The user updates the combined script to 1.0.14 and reloads SpicyChat. Verify the chat export in the real account after updating. Local and CI browser checks use synthetic site handlers.
+The user updates the combined script to 1.0.15 and reloads SpicyChat. Verify the chat export in the real account after updating. Local and CI browser checks use synthetic site handlers.
 
 ## Full original-source audit (1.0.5)
 
@@ -112,3 +112,7 @@ The user updates the combined script to 1.0.14 and reloads SpicyChat. Verify the
 
 - The chat settings panel shows **Скачать чат в JSON** with a progress bar and a running message count. The browser downloads the file after the full history is collected. Navigation away from the dialogue cancels the pending export.
 - Export and summary share the document-start session capture and history request. Export works with the summary module disabled. Each download contains the conversation and character IDs, title, and API message records ordered oldest to newest. Variants and attachment references stay in the message records. Duplicate page entries are dropped by message ID. Incomplete pagination is reported in the panel.
+
+## Chat export pagination fix (1.0.15)
+
+- SpicyChat reported over 1,000 messages for a dialogue whose history returned 521. Export uses the history API's short or empty page to determine completion. The animated progress bar displays the number of collected messages until download starts. Tests cover an inflated total, overlapping pages, and a genuine API error.

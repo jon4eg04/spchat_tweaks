@@ -119,7 +119,6 @@ export async function collectChatExport(api, context, { signal, onProgress }) {
     const messages = new Map();
     const cursors = new Set();
     let lastId = '';
-    let total = 0;
     let title = null;
 
     while (true) {
@@ -130,8 +129,6 @@ export async function collectChatExport(api, context, { signal, onProgress }) {
         if (!Array.isArray(batch) || (payload.conversation_id && payload.conversation_id !== context.conversationId)) {
             throw new Error('SpicyChat вернул неожиданный ответ при загрузке истории.');
         }
-        const reportedTotal = Number(payload.num_messages);
-        if (Number.isSafeInteger(reportedTotal)) total = Math.max(total, reportedTotal);
         if (title === null && typeof payload.label === 'string') title = payload.label;
 
         const previousCount = messages.size;
@@ -140,9 +137,11 @@ export async function collectChatExport(api, context, { signal, onProgress }) {
             if (!id) throw new Error('SpicyChat вернул сообщение без идентификатора.');
             if (!messages.has(id)) messages.set(id, message);
         }
-        onProgress(messages.size, total);
+        onProgress(messages.size);
 
-        if (batch.length < CHAT_HISTORY_PAGE_SIZE && messages.size >= total) break;
+        // The reported count can exceed the available history. The API ends
+        // pagination with a short page (empty when the last page was full).
+        if (batch.length < CHAT_HISTORY_PAGE_SIZE) break;
         lastId = normalizeChatMessageId(batch.at(-1)?.id);
         if (!lastId || cursors.has(lastId) || messages.size === previousCount) {
             throw new Error('SpicyChat не вернул следующую страницу истории. Попробуй скачать чат ещё раз.');

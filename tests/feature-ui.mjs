@@ -169,7 +169,7 @@ const exportPage = await fixture();
 const exportPanel = exportPage.locator('#spchat-chat-panel');
 const exportButton = exportPanel.getByRole('button', { name: 'Скачать чат в JSON' });
 const exportProgress = exportPanel.getByRole('progressbar', { name: 'Прогресс выгрузки чата' });
-const oldestFirst = Array.from({ length: 52 }, (_, index) => ({
+const oldestFirst = Array.from({ length: 521 }, (_, index) => ({
     id: `export-${index}`, role: index % 2 ? 'user' : 'bot', content: ` Привет ${index}\n*строка* `,
     createdAt: 1700000000000 + index * 1000,
     ...(index === 2 ? { is_alternative: true, prev_id: 'export-1', image: 'conversations/fixture.png' } : {}),
@@ -187,19 +187,21 @@ await exportPage.route(`**/characters/${bot}/messages/${chat}*`, async route => 
     assert.equal(route.request().headers().authorization, 'Bearer synthetic-export');
     const headers = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' };
     if (cursor) await lastPageGate;
+    const start = cursor ? newestFirst.findIndex(message => message.id === cursor) : 0;
+    assert.ok(start >= 0);
     return route.fulfill({ status: failExport && cursor ? 503 : 200, headers, json: {
-        conversation_id: chat, num_messages: oldestFirst.length, label: 'Пример',
-        messages: cursor ? newestFirst.slice(49) : newestFirst.slice(0, 50),
+        conversation_id: chat, num_messages: 1200, label: 'Пример',
+        messages: newestFirst.slice(start, start + 50),
     } });
 });
 await exportPage.evaluate(async ({ bot, chat }) => {
     await fetch(`https://prod.nd-api.com/characters/${bot}/messages/${chat}`, { headers: [['Authorization', 'Bearer synthetic-export']] });
 }, { bot, chat });
 await exportButton.click();
-await exportPanel.getByText('Загружено сообщений: 50 из 52', { exact: true }).waitFor();
+await exportPanel.getByText('Загружено сообщений: 50', { exact: true }).waitFor();
 assert.equal(await exportProgress.isVisible(), true);
 assert.equal(await exportButton.isDisabled(), true);
-assert.ok(await exportProgress.evaluate(node => node.value > 0 && node.value < node.max));
+assert.equal(await exportProgress.evaluate(node => node.position), -1);
 const downloadEvent = exportPage.waitForEvent('download');
 releaseLastPage();
 const download = await downloadEvent;
@@ -207,9 +209,9 @@ assert.equal(download.suggestedFilename(), `spicychat-${chat}.json`);
 assert.deepEqual(JSON.parse(await readFile(await download.path(), 'utf8')), {
     schemaVersion: 1, characterId: bot, conversationId: chat, title: 'Пример', messages: oldestFirst,
 });
-await exportPanel.getByText('Выгрузка готова · сообщений: 52').waitFor();
+await exportPanel.getByText('Выгрузка готова · сообщений: 521').waitFor();
 assert.equal(await exportProgress.evaluate(node => node.value), 100);
-assert.deepEqual(exportCursors, [null, 'export-2']);
+assert.deepEqual(exportCursors, [null, ...Array.from({ length: 10 }, (_, index) => `export-${471 - 49 * index}`)]);
 
 let downloadsAfterSuccess = 0;
 exportPage.on('download', () => { downloadsAfterSuccess++; });
